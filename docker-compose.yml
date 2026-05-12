@@ -1,0 +1,53 @@
+# Production / shared compose definition.
+#
+# In production this file is used standalone. The app containers connect to
+# Postgres, Redis, and Caddy that are managed by separate stacks in
+# /opt/salespilot/compose/{data,caddy}/ on the host.
+#
+# In local development, `docker-compose.override.yml` is auto-merged on top
+# of this file and adds its own postgres + redis services and source mounts
+# for hot reload.
+
+services:
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    image: salespilot-api:latest
+    container_name: salespilot-api
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - salespilot
+    env_file:
+      - .env
+    # In prod, Caddy on the host network terminates TLS and reverse-proxies
+    # to this container on port 8000 inside the `salespilot` network.
+    # No host port exposed by default.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz').read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      target: production
+    image: salespilot-web:latest
+    container_name: salespilot-web
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - salespilot
+    # Serves the built static SPA on port 80 inside the network; Caddy
+    # routes non-/api/* traffic here.
+
+networks:
+  salespilot:
+    # In production this is the external bridge created on the host.
+    external: true

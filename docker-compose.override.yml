@@ -1,0 +1,78 @@
+# Dev overrides. Docker Compose auto-merges this on top of docker-compose.yml
+# when you run `docker compose up` from this repo.
+#
+# This file:
+#  - Provides its own postgres + redis (so dev doesn't depend on the host stack)
+#  - Overrides the API to use uvicorn --reload and mounts source code
+#  - Overrides the web container to run `vite dev` instead of serving a build
+#  - Exposes ports to the host so you can hit them directly
+
+services:
+  api:
+    # Override the production image: build the dev target with the source
+    # mounted in so changes hot-reload.
+    build:
+      target: dev
+    command: ["uvicorn", "salespilot.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./apps/api:/app
+    ports:
+      - "8000:8000"
+    environment:
+      ENV: development
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+
+  web:
+    build:
+      target: dev
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules   # keep container's node_modules, don't shadow with host
+    ports:
+      - "5173:5173"
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: salespilot-dev-postgres
+    restart: unless-stopped
+    networks:
+      - salespilot
+    environment:
+      POSTGRES_USER: salespilot
+      POSTGRES_DB: salespilot
+      POSTGRES_PASSWORD: changeme_dev_only
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - dev-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salespilot -d salespilot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: salespilot-dev-redis
+    restart: unless-stopped
+    networks:
+      - salespilot
+    command: ["redis-server", "--requirepass", "changeme_dev_only", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - dev-redis-data:/data
+
+volumes:
+  dev-postgres-data:
+  dev-redis-data:
+
+# In dev we create a local network because the prod-external one does not
+# exist on a developer's machine.
+networks:
+  salespilot:
+    external: false
+    name: salespilot-dev

@@ -1,0 +1,44 @@
+# Build / dependency output
+node_modules/
+dist/
+build/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets — NEVER commit these
+.env
+.env.local
+.env.*.local
+secrets/
+*.pem
+*.key
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local override that adds host port exposures, debugger ports, etc.
+docker-compose.local.yml
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Vite
+*.local
