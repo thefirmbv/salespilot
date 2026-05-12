@@ -17,13 +17,17 @@ type Contact = {
 const columns: Column<Contact>[] = [
   {
     header: "Name",
+    sortKey: "last_name",
     cell: (c) => [c.first_name, c.last_name].filter(Boolean).join(" ") || "—",
     className: "font-medium",
   },
-  { header: "Email", cell: (c) => dash(c.email), className: "text-slate-700" },
-  { header: "Job title", cell: (c) => dash(c.job_title), className: "text-slate-700" },
+  { header: "Email",
+    sortKey: "email", cell: (c) => dash(c.email), className: "text-slate-700" },
+  { header: "Job title",
+    cell: (c) => dash(c.job_title), className: "text-slate-700" },
   {
     header: "Created",
+    sortKey: "created_at",
     cell: (c) => fmtDate(c.created_at),
     className: "text-slate-500",
   },

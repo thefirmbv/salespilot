@@ -44,6 +44,8 @@ def make_crud_router(
     public_schema: type[PublicT],
     filterable_fields: tuple[str, ...] = (),
     searchable_fields: tuple[str, ...] = (),
+    sortable_fields: tuple[str, ...] = (),
+    default_sort: str = "-created_at",
     on_before_save: "Callable[[Any, AsyncSession], Awaitable[None]] | None" = None,
 ) -> APIRouter:
     """`on_before_save` is invoked after fields have been applied but before
@@ -82,11 +84,21 @@ def make_crud_router(
             stmt = stmt.where(or_(*search_clauses))
             count_stmt = count_stmt.where(or_(*search_clauses))
 
+        # Sorting: ?sort=field for ASC, ?sort=-field for DESC. Only allow-listed
+        # fields plus the default 'created_at' (since lists default to it).
+        sort_param = request.query_params.get("sort", default_sort)
+        sort_key = sort_param.lstrip("-")
+        sort_desc = sort_param.startswith("-")
+        allowed_sorts = set(sortable_fields) | {"created_at"}
+        if sort_key not in allowed_sorts:
+            sort_key = "created_at"
+            sort_desc = True
+        sort_col = getattr(model, sort_key)
+        stmt = stmt.order_by(sort_col.desc() if sort_desc else sort_col.asc())
+
         total = (await db.execute(count_stmt)).scalar_one()
         rows = (
-            await db.execute(
-                stmt.order_by(model.created_at.desc()).limit(limit).offset(offset)  # type: ignore[attr-defined]
-            )
+            await db.execute(stmt.limit(limit).offset(offset))
         ).scalars().all()
         return Page[public_schema](  # type: ignore[valid-type]
             items=[public_schema.model_validate(r) for r in rows],  # type: ignore[arg-type]

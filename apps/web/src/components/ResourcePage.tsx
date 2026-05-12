@@ -9,12 +9,13 @@ export type Column<T> = {
   header: string;
   cell: (row: T) => ReactNode;
   className?: string;
+  /** If provided, clicking this header sorts by this field. */
+  sortKey?: string;
 };
 
 type Page<T> = { items: T[]; total: number; limit: number; offset: number };
 
 type ExtraFilter = {
-  /** Param name in the URL */
   param: string;
   label: string;
   options: { value: string; label: string }[];
@@ -31,11 +32,11 @@ type Props<T extends { id: string }> = {
   formValuesToBody?: (values: FormValues) => unknown;
   rowLabel?: (row: T) => string;
   rowLink?: (row: T) => string;
-  /** When set, show a search input that filters via ?q=. */
   searchable?: boolean;
   searchPlaceholder?: string;
-  /** Extra dropdown filters mapped to URL query parameters. */
   filters?: ExtraFilter[];
+  /** Rows per page. Default 50. */
+  pageSize?: number;
 };
 
 export function ResourcePage<T extends { id: string }>({
@@ -59,27 +60,33 @@ export function ResourcePage<T extends { id: string }>({
   searchable = false,
   searchPlaceholder = "Search…",
   filters = [],
+  pageSize = 50,
 }: Props<T>) {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
 
-  // Search input local state, mirrored to URL after debounce.
   const initialQ = params.get("q") ?? "";
   const [q, setQ] = useState(initialQ);
   const debouncedQ = useDebounce(q, 300);
 
-  // Reflect debounced search into URL.
+  // Reflect debounced search into URL, and reset offset to 0 on q change.
   if (debouncedQ !== (params.get("q") ?? "")) {
     const next = new URLSearchParams(params);
     if (debouncedQ) next.set("q", debouncedQ);
     else next.delete("q");
+    next.delete("offset");
     setParams(next, { replace: true });
   }
 
-  // Build the request query string from the current URL params.
+  const offset = Math.max(0, parseInt(params.get("offset") ?? "0", 10) || 0);
+  const sort = params.get("sort") ?? "";
+
+  // Build the request query.
   const requestParams = new URLSearchParams();
-  requestParams.set("limit", "100");
+  requestParams.set("limit", String(pageSize));
+  if (offset) requestParams.set("offset", String(offset));
   if (debouncedQ) requestParams.set("q", debouncedQ);
+  if (sort) requestParams.set("sort", sort);
   for (const f of filters) {
     const val = params.get(f.param);
     if (val) requestParams.set(f.param, val);
@@ -87,9 +94,10 @@ export function ResourcePage<T extends { id: string }>({
   const requestString = requestParams.toString();
 
   const queryKey = [endpoint, requestString];
-  const { data, isLoading, error } = useQuery<Page<T>>({
+  const { data, isLoading, error, isFetching } = useQuery<Page<T>>({
     queryKey,
     queryFn: () => api<Page<T>>(`${endpoint}?${requestString}`),
+    placeholderData: (prev) => prev,
   });
 
   const [dialog, setDialog] = useState<
@@ -103,13 +111,11 @@ export function ResourcePage<T extends { id: string }>({
       api<T>(endpoint, { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: [endpoint] }),
   });
-
   const updateMut = useMutation({
     mutationFn: ({ id, body }: { id: string; body: unknown }) =>
       api<T>(`${endpoint}/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: [endpoint] }),
   });
-
   const deleteMut = useMutation({
     mutationFn: (id: string) => api<void>(`${endpoint}/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: [endpoint] }),
@@ -158,13 +164,38 @@ export function ResourcePage<T extends { id: string }>({
     const next = new URLSearchParams(params);
     if (value) next.set(param, value);
     else next.delete(param);
+    next.delete("offset");
+    setParams(next, { replace: true });
+  }
+
+  function setOffset(o: number) {
+    const next = new URLSearchParams(params);
+    if (o > 0) next.set("offset", String(o));
+    else next.delete("offset");
+    setParams(next, { replace: true });
+  }
+
+  function cycleSort(key: string) {
+    // unset -> -key (DESC) -> key (ASC) -> unset
+    let nextValue: string | null;
+    if (sort === `-${key}`) nextValue = key;
+    else if (sort === key) nextValue = null;
+    else nextValue = `-${key}`;
+    const next = new URLSearchParams(params);
+    if (nextValue) next.set("sort", nextValue);
+    else next.delete("sort");
+    next.delete("offset");
     setParams(next, { replace: true });
   }
 
   const inputCls =
     "rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900";
+  const hasAnyFilter =
+    !!debouncedQ || filters.some((f) => params.get(f.param)) || !!sort;
 
-  const hasAnyFilter = !!debouncedQ || filters.some((f) => params.get(f.param));
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.floor(offset / pageSize) + 1;
 
   return (
     <div>
@@ -213,6 +244,8 @@ export function ResourcePage<T extends { id: string }>({
                 setQ("");
                 const next = new URLSearchParams(params);
                 next.delete("q");
+                next.delete("sort");
+                next.delete("offset");
                 for (const f of filters) next.delete(f.param);
                 setParams(next, { replace: true });
               }}
@@ -237,14 +270,28 @@ export function ResourcePage<T extends { id: string }>({
           </div>
         )}
         {data && data.items.length > 0 && (
-          <table className="w-full text-sm">
+          <table className={`w-full text-sm ${isFetching ? "opacity-70" : ""}`}>
             <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-600">
               <tr>
-                {allColumns.map((c) => (
-                  <th key={c.header} className={`px-4 py-2 ${c.className ?? ""}`}>
-                    {c.header}
-                  </th>
-                ))}
+                {allColumns.map((c) => {
+                  const isActive = c.sortKey && (sort === c.sortKey || sort === `-${c.sortKey}`);
+                  const arrow =
+                    sort === c.sortKey ? "↑" : sort === `-${c.sortKey}` ? "↓" : "";
+                  return (
+                    <th
+                      key={c.header}
+                      className={`px-4 py-2 ${c.className ?? ""} ${
+                        c.sortKey ? "cursor-pointer select-none hover:bg-slate-100" : ""
+                      }`}
+                      onClick={() => c.sortKey && cycleSort(c.sortKey)}
+                    >
+                      <span className={isActive ? "text-slate-900" : ""}>
+                        {c.header}
+                        {arrow && <span className="ml-1">{arrow}</span>}
+                      </span>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -268,9 +315,32 @@ export function ResourcePage<T extends { id: string }>({
             </tbody>
           </table>
         )}
-        {data && data.items.length > 0 && (
-          <div className="border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
-            Showing {data.items.length} of {data.total}
+        {data && data.total > 0 && (
+          <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
+            <span>
+              Showing {offset + 1}–{offset + data.items.length} of {data.total}
+            </span>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setOffset(Math.max(0, offset - pageSize))}
+                  disabled={offset === 0}
+                  className="rounded-md bg-white px-2 py-1 ring-1 ring-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ← Prev
+                </button>
+                <span className="px-2">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setOffset(offset + pageSize)}
+                  disabled={offset + pageSize >= data.total}
+                  className="rounded-md bg-white px-2 py-1 ring-1 ring-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next →
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

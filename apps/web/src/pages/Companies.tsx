@@ -13,12 +13,15 @@ type Company = {
 };
 
 const columns: Column<Company>[] = [
-  { header: "Name", cell: (c) => c.name, className: "font-medium" },
-  { header: "Domain", cell: (c) => dash(c.domain), className: "text-slate-700" },
-  { header: "Industry", cell: (c) => dash(c.industry), className: "text-slate-700" },
+  { header: "Name", sortKey: "name", cell: (c) => c.name, className: "font-medium" },
+  { header: "Domain",
+    sortKey: "domain", cell: (c) => dash(c.domain), className: "text-slate-700" },
+  { header: "Industry",
+    sortKey: "industry", cell: (c) => dash(c.industry), className: "text-slate-700" },
   { header: "Size", cell: (c) => dash(c.size), className: "text-slate-700" },
   {
     header: "Created",
+    sortKey: "created_at",
     cell: (c) => fmtDate(c.created_at),
     className: "text-slate-500",
   },

@@ -49,12 +49,48 @@ export function Deals() {
     setParams(next, { replace: true });
   }
   const statusFilter = params.get("status") ?? "";
+  const sort = params.get("sort") ?? "";
+  const offset = Math.max(0, parseInt(params.get("offset") ?? "0", 10) || 0);
+  const PAGE_SIZE = 50;
+
+  function cycleSort(key: string) {
+    let nextValue: string | null;
+    if (sort === `-${key}`) nextValue = key;
+    else if (sort === key) nextValue = null;
+    else nextValue = `-${key}`;
+    const next = new URLSearchParams(params);
+    if (nextValue) next.set("sort", nextValue);
+    else next.delete("sort");
+    next.delete("offset");
+    setParams(next, { replace: true });
+  }
+
+  function setOffset(o: number) {
+    const next = new URLSearchParams(params);
+    if (o > 0) next.set("offset", String(o));
+    else next.delete("offset");
+    setParams(next, { replace: true });
+  }
+
+  function sortableTh(label: string, key: string) {
+    const arrow = sort === key ? "↑" : sort === `-${key}` ? "↓" : "";
+    return (
+      <th
+        className="px-4 py-2 cursor-pointer select-none hover:bg-slate-100"
+        onClick={() => cycleSort(key)}
+      >
+        {label}{arrow && <span className="ml-1">{arrow}</span>}
+      </th>
+    );
+  }
 
   // Build list-view query string.
   const listParams = new URLSearchParams();
-  listParams.set("limit", "100");
+  listParams.set("limit", String(50));
+  if (offset) listParams.set("offset", String(offset));
   if (debouncedQ) listParams.set("q", debouncedQ);
   if (statusFilter) listParams.set("status", statusFilter);
+  if (sort) listParams.set("sort", sort);
   const listParamsString = listParams.toString();
 
   const dealsQ = useQuery<Page<Deal>>({
@@ -248,10 +284,10 @@ export function Deals() {
                 <table className="w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-600">
                     <tr>
-                      <th className="px-4 py-2">Name</th>
-                      <th className="px-4 py-2">Amount</th>
-                      <th className="px-4 py-2">Status</th>
-                      <th className="px-4 py-2">Expected close</th>
+                      {sortableTh("Name", "name")}
+                      {sortableTh("Amount", "amount")}
+                      {sortableTh("Status", "status")}
+                      {sortableTh("Expected close", "expected_close_date")}
                       <th className="px-4 py-2 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -294,8 +330,31 @@ export function Deals() {
                     ))}
                   </tbody>
                 </table>
-                <div className="border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
-                  Showing {dealsQ.data.items.length} of {dealsQ.data.total}
+                <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
+                  <span>
+                    Showing {offset + 1}–{offset + dealsQ.data.items.length} of {dealsQ.data.total}
+                  </span>
+                  {dealsQ.data.total > PAGE_SIZE && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+                        disabled={offset === 0}
+                        className="rounded-md bg-white px-2 py-1 ring-1 ring-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        ← Prev
+                      </button>
+                      <span className="px-2">
+                        Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(dealsQ.data.total / PAGE_SIZE))}
+                      </span>
+                      <button
+                        onClick={() => setOffset(offset + PAGE_SIZE)}
+                        disabled={offset + PAGE_SIZE >= dealsQ.data.total}
+                        className="rounded-md bg-white px-2 py-1 ring-1 ring-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  )}
                 </div>
               </>
             )}

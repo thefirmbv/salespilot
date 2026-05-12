@@ -18,8 +18,10 @@ type Activity = {
 };
 
 const columns: Column<Activity>[] = [
-  { header: "Type", cell: (a) => <TypeBadge type={a.type} /> },
-  { header: "Subject", cell: (a) => dash(a.subject), className: "font-medium" },
+  { header: "Type",
+    sortKey: "type", cell: (a) => <TypeBadge type={a.type} /> },
+  { header: "Subject",
+    sortKey: "subject", cell: (a) => dash(a.subject), className: "font-medium" },
   {
     header: "On",
     cell: (a) => (
@@ -33,9 +35,11 @@ const columns: Column<Activity>[] = [
       </Link>
     ),
   },
-  { header: "Due", cell: (a) => fmtDateTime(a.due_at), className: "text-slate-700" },
+  { header: "Due",
+    sortKey: "due_at", cell: (a) => fmtDateTime(a.due_at), className: "text-slate-700" },
   {
     header: "Done",
+    sortKey: "completed_at",
     cell: (a) =>
       a.completed_at ? (
         <span className="text-green-700">{fmtDateTime(a.completed_at)}</span>
