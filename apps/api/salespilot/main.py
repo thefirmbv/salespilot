@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from salespilot.api.auth import router as auth_router
+from salespilot.api.dashboard import router as dashboard_router
 from salespilot.api.pipelines import router as pipelines_router
 from salespilot.api.crm import (
     activities_router,
@@ -67,6 +68,7 @@ def create_app() -> FastAPI:
     prefix = "/api/v1"
     app.include_router(auth_router, prefix=prefix)
     app.include_router(pipelines_router, prefix=prefix)
+    app.include_router(dashboard_router, prefix=prefix)
     app.include_router(companies_router, prefix=prefix)
     app.include_router(contacts_router, prefix=prefix)
     app.include_router(deals_router, prefix=prefix)

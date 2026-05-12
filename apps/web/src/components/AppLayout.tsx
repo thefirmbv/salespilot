@@ -20,6 +20,7 @@ export function AppLayout() {
         </div>
         <nav className="px-2 space-y-1">
           {[
+            ["/dashboard", "Dashboard"],
             ["/contacts", "Contacts"],
             ["/companies", "Companies"],
             ["/deals", "Deals"],

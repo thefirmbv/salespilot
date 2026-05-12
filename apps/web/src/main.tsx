@@ -6,6 +6,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "./index.css";
 import { AuthProvider, RequireAuth } from "./lib/auth";
 import { Login } from "./pages/Login";
+import { Dashboard } from "./pages/Dashboard";
 import { Contacts } from "./pages/Contacts";
 import { ContactDetail } from "./pages/ContactDetail";
 import { Companies } from "./pages/Companies";
@@ -38,6 +39,7 @@ createRoot(root).render(
                 </RequireAuth>
               }
             >
+              <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/contacts/:id" element={<ContactDetail />} />
               <Route path="/companies" element={<Companies />} />
@@ -45,7 +47,7 @@ createRoot(root).render(
               <Route path="/deals" element={<Deals />} />
               <Route path="/deals/:id" element={<DealDetail />} />
               <Route path="/activities" element={<Activities />} />
-              <Route path="/" element={<Navigate to="/contacts" replace />} />
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
