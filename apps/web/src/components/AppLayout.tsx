@@ -103,6 +103,20 @@ const ICONS = {
       <path strokeWidth={1.6} strokeLinecap="round" d="M8 10v8M8 6.5v.5M12 18v-4a2 2 0 014 0v4M12 14v4" />
     </>
   ),
+  megaphone: (
+    <path
+      strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6}
+      d="M3 11l18-5v12L3 13v-2zm0 0v3a2 2 0 002 2h2v-7H5a2 2 0 00-2 2zm5 2v4a2 2 0 002 2h1l1-3"
+    />
+  ),
+  wasp: (
+    <>
+      <ellipse cx="12" cy="13" rx="3.5" ry="5.5" strokeWidth={1.6} />
+      <path strokeWidth={1.6} strokeLinecap="round" d="M8.5 11h7M8.5 13.5h7M8.5 16h7" />
+      <path strokeWidth={1.6} strokeLinecap="round" d="M12 3v3.5M10 5l2 2 2-2" />
+      <path strokeWidth={1.2} strokeLinecap="round" d="M6.5 8c0 1.5 1 2.5 2.5 3M17.5 8c0 1.5-1 2.5-2.5 3" />
+    </>
+  ),
   settings: (
     <path
       strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6}
@@ -177,6 +191,12 @@ export function AppLayout() {
         { to: "/deals", label: "Deals", icon: "coin" },
         { to: "/contacts", label: "Contacts", icon: "users" },
         { to: "/activities", label: "Activities", icon: "checklist", badge: counts.activities, badgeTone: "danger" },
+      ],
+    },
+    {
+      title: "Acquisitie",
+      items: [
+        { to: "/wespennest", label: "Wespennest", icon: "wasp" },
       ],
     },
     {

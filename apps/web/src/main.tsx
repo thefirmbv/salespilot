@@ -17,6 +17,7 @@ import { LinkedInOutreach } from "./pages/LinkedInOutreach";
 import { Quotations } from "./pages/Quotations";
 import { MailCampaigns } from "./pages/MailCampaigns";
 import { MailCampaignDetail } from "./pages/MailCampaignDetail";
+import { Wespennest } from "./pages/Wespennest";
 import { CompanyDetail } from "./pages/CompanyDetail";
 import { Deals } from "./pages/Deals";
 import { DealDetail } from "./pages/DealDetail";
@@ -59,6 +60,7 @@ createRoot(root).render(
               <Route path="/quotations" element={<Quotations />} />
               <Route path="/mail-campaigns" element={<MailCampaigns />} />
               <Route path="/mail-campaigns/:id" element={<MailCampaignDetail />} />
+              <Route path="/wespennest" element={<Wespennest />} />
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/contacts/:id" element={<ContactDetail />} />
               <Route path="/companies/:id" element={<CompanyDetail />} />
