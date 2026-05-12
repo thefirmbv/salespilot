@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { FormDialog, type FieldSpec, type FormValues } from "@/components/FormDialog";
@@ -158,8 +159,12 @@ export function Deals() {
             </thead>
             <tbody>
               {dealsQ.data.items.map((d) => (
-                <tr key={d.id} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-2 font-medium">{d.name}</td>
+                <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                  <td className="px-4 py-2 font-medium">
+                    <Link to={`/deals/${d.id}`} className="hover:underline">
+                      {d.name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-2 tabular-nums text-slate-700">
                     {fmtMoney(d.amount, d.currency)}
                   </td>

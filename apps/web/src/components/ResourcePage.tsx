@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { FormDialog, type FieldSpec, type FormValues } from "./FormDialog";
@@ -26,6 +27,8 @@ type Props<T extends { id: string }> = {
   formValuesToBody?: (values: FormValues) => unknown;
   /** Build a short, human label for a row (used in delete-confirm). */
   rowLabel?: (row: T) => string;
+  /** If set, the first cell of every row becomes a link to this path. */
+  rowLink?: (row: T) => string;
 };
 
 export function ResourcePage<T extends { id: string }>({
@@ -37,6 +40,7 @@ export function ResourcePage<T extends { id: string }>({
   formFields,
   rowToFormValues = (row) => ({ ...(row as unknown as FormValues) }),
   formValuesToBody = (v) => v,
+  rowLink,
   rowLabel = (row) =>
     ((row as unknown as { name?: string; email?: string; subject?: string })
       .name ??
@@ -153,12 +157,21 @@ export function ResourcePage<T extends { id: string }>({
             </thead>
             <tbody>
               {data.items.map((row) => (
-                <tr key={row.id} className="border-b border-slate-100 last:border-0">
-                  {allColumns.map((c) => (
-                    <td key={c.header} className={`px-4 py-2 ${c.className ?? ""}`}>
-                      {c.cell(row)}
-                    </td>
-                  ))}
+                <tr key={row.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                  {allColumns.map((c, idx) => {
+                    const content = c.cell(row);
+                    // First cell becomes the row link if rowLink is provided.
+                    const wrapped = rowLink && idx === 0 ? (
+                      <Link to={rowLink(row)} className="hover:underline">
+                        {content}
+                      </Link>
+                    ) : content;
+                    return (
+                      <td key={c.header} className={`px-4 py-2 ${c.className ?? ""}`}>
+                        {wrapped}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>

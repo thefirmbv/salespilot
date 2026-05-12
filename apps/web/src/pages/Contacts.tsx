@@ -52,6 +52,7 @@ export function Contacts() {
       columns={columns}
       emptyMessage="No contacts yet. Click + New contact to start."
       formFields={fields}
+      rowLink={(c) => `/contacts/${c.id}`}
       rowLabel={(c) =>
         [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email || c.id
       }

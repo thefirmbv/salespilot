@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type { Column } from "@/components/ResourcePage";
 import { ResourcePage } from "@/components/ResourcePage";
 import type { FieldSpec, FormValues } from "@/components/FormDialog";
@@ -22,11 +23,14 @@ const columns: Column<Activity>[] = [
   {
     header: "On",
     cell: (a) => (
-      <span className="text-slate-600">
+      <Link
+        to={`/${a.target_type}s/${a.target_id}`}
+        className="text-slate-600 hover:underline"
+      >
         {a.target_type}{" "}
         <span className="text-slate-400">·</span>{" "}
         <span className="font-mono text-xs">{a.target_id.slice(0, 8)}</span>
-      </span>
+      </Link>
     ),
   },
   { header: "Due", cell: (a) => fmtDateTime(a.due_at), className: "text-slate-700" },

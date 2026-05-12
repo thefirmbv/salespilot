@@ -52,6 +52,7 @@ export function Companies() {
       columns={columns}
       emptyMessage="No companies yet."
       formFields={fields}
+      rowLink={(c) => `/companies/${c.id}`}
     />
   );
 }

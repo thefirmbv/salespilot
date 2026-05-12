@@ -24,6 +24,7 @@ companies_router = make_crud_router(
     create_schema=CompanyCreate,
     update_schema=CompanyUpdate,
     public_schema=CompanyPublic,
+    # No filterable fields yet; add as the UI needs them.
 )
 
 contacts_router = make_crud_router(
@@ -33,6 +34,7 @@ contacts_router = make_crud_router(
     create_schema=ContactCreate,
     update_schema=ContactUpdate,
     public_schema=ContactPublic,
+    filterable_fields=("company_id", "owner_id"),
 )
 
 deals_router = make_crud_router(
@@ -42,6 +44,7 @@ deals_router = make_crud_router(
     create_schema=DealCreate,
     update_schema=DealUpdate,
     public_schema=DealPublic,
+    filterable_fields=("company_id", "primary_contact_id", "owner_id", "status", "stage_id"),
 )
 
 activities_router = make_crud_router(
@@ -51,4 +54,5 @@ activities_router = make_crud_router(
     create_schema=ActivityCreate,
     update_schema=ActivityUpdate,
     public_schema=ActivityPublic,
+    filterable_fields=("target_type", "target_id", "type", "author_id"),
 )

@@ -1,21 +1,23 @@
-"""Generic CRUD helper to avoid four near-identical route files.
+"""Generic CRUD helper used by all tenant-scoped resources.
 
-Each tenant-scoped table gets standard endpoints:
-    GET    /<resource>                 list (paginated)
-    POST   /<resource>                 create
-    GET    /<resource>/{id}             read
-    PATCH  /<resource>/{id}             update
-    DELETE /<resource>/{id}             delete
+Each tenant-scoped table gets:
+    GET    /<resource>?<filters>         list (paginated, filterable)
+    POST   /<resource>                    create
+    GET    /<resource>/{id}               read
+    PATCH  /<resource>/{id}               update
+    DELETE /<resource>/{id}               delete
 
-The org_id is set automatically from the tenant session (RLS would block
-cross-tenant writes regardless, but we set it explicitly so the row is
-visible to the same session).
+`filterable_fields` is an allow-list of column names that can be filtered
+via query string. The list endpoint translates `?company_id=uuid` to
+`WHERE company_id = uuid`. We keep the surface narrow on purpose: anything
+that isn't on the allow-list is silently ignored so junk query strings
+don't leak schema info or accidentally match other columns.
 """
 
 from typing import Any, TypeVar
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
@@ -37,19 +39,33 @@ def make_crud_router(
     create_schema: type[CreateT],
     update_schema: type[UpdateT],
     public_schema: type[PublicT],
+    filterable_fields: tuple[str, ...] = (),
 ) -> APIRouter:
     router = APIRouter(prefix=prefix, tags=[tag])
 
     @router.get("", response_model=Page[public_schema])  # type: ignore[valid-type]
     async def list_items(
+        request: Request,
         db: Db,
         limit: int = Query(default=50, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> Any:
-        total = (await db.execute(select(func.count()).select_from(model))).scalar_one()
+        stmt = select(model)
+        count_stmt = select(func.count()).select_from(model)
+
+        # Apply allow-listed filters from the query string.
+        for key in filterable_fields:
+            raw = request.query_params.get(key)
+            if raw is None or raw == "":
+                continue
+            col = getattr(model, key)
+            stmt = stmt.where(col == raw)
+            count_stmt = count_stmt.where(col == raw)
+
+        total = (await db.execute(count_stmt)).scalar_one()
         rows = (
             await db.execute(
-                select(model).order_by(model.created_at.desc()).limit(limit).offset(offset)  # type: ignore[attr-defined]
+                stmt.order_by(model.created_at.desc()).limit(limit).offset(offset)  # type: ignore[attr-defined]
             )
         ).scalars().all()
         return Page[public_schema](  # type: ignore[valid-type]
@@ -62,8 +78,6 @@ def make_crud_router(
     @router.post("", response_model=public_schema, status_code=201)  # type: ignore[valid-type]
     async def create_item(payload: create_schema, db: Db, auth: CurrentAuth) -> Any:  # type: ignore[valid-type]
         data = payload.model_dump(exclude_unset=False)
-        # Set org_id from the tenant context. Required even though RLS would
-        # also block: SQLAlchemy validates NOT NULL before INSERT.
         data["org_id"] = auth.org_id
         item = model(**data)
         db.add(item)
