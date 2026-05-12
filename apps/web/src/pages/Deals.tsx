@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { FormDialog, type FieldSpec, type FormValues } from "@/components/FormDialog";
 import { StatusBadge, fmtDate, fmtMoney } from "@/lib/format";
 import { loadCompanyOptions, loadContactOptions } from "@/lib/options";
+import { DealsKanban } from "@/components/DealsKanban";
 
 type Deal = {
   id: string;
@@ -24,12 +25,12 @@ type Pipeline = { id: string; name: string; is_default: boolean };
 type Stage = { id: string; name: string; position: number };
 type Page<T> = { items: T[]; total: number; limit: number; offset: number };
 
-/**
- * Deals is bespoke because the form depends on pipeline+stage selection
- * loaded from a separate endpoint. Other resources can use ResourcePage.
- */
+type View = "list" | "kanban";
+
 export function Deals() {
   const qc = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const view: View = params.get("view") === "kanban" ? "kanban" : "list";
   const [dialog, setDialog] = useState<
     | { mode: "create" }
     | { mode: "edit"; row: Deal }
@@ -39,6 +40,7 @@ export function Deals() {
   const dealsQ = useQuery<Page<Deal>>({
     queryKey: ["/deals"],
     queryFn: () => api<Page<Deal>>("/deals?limit=100"),
+    enabled: view === "list",
   });
 
   const pipelinesQ = useQuery<Pipeline[]>({
@@ -121,81 +123,114 @@ export function Deals() {
     setDialog(null);
   }
 
+  function setView(v: View) {
+    const next = new URLSearchParams(params);
+    if (v === "list") next.delete("view");
+    else next.set("view", v);
+    setParams(next, { replace: true });
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Deals</h1>
-        <button
-          onClick={() => setDialog({ mode: "create" })}
-          disabled={!defaultPipeline}
-          className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-        >
-          + New deal
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-md ring-1 ring-slate-300 overflow-hidden text-sm">
+            <button
+              onClick={() => setView("list")}
+              className={`px-3 py-1.5 ${
+                view === "list" ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              List
+            </button>
+            <button
+              onClick={() => setView("kanban")}
+              className={`px-3 py-1.5 border-l border-slate-300 ${
+                view === "kanban" ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              Kanban
+            </button>
+          </div>
+          <button
+            onClick={() => setDialog({ mode: "create" })}
+            disabled={!defaultPipeline}
+            className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+          >
+            + New deal
+          </button>
+        </div>
       </div>
 
-      <div className="mt-6 overflow-hidden rounded-lg ring-1 ring-slate-200 bg-white">
-        {dealsQ.isLoading && <div className="p-4 text-slate-500">Loading…</div>}
-        {dealsQ.error && (
-          <div className="p-4 text-red-600">
-            {dealsQ.error instanceof Error ? dealsQ.error.message : "failed"}
+      <div className="mt-6">
+        {view === "kanban" ? (
+          <DealsKanban />
+        ) : (
+          <div className="overflow-hidden rounded-lg ring-1 ring-slate-200 bg-white">
+            {dealsQ.isLoading && <div className="p-4 text-slate-500">Loading…</div>}
+            {dealsQ.error && (
+              <div className="p-4 text-red-600">
+                {dealsQ.error instanceof Error ? dealsQ.error.message : "failed"}
+              </div>
+            )}
+            {dealsQ.data?.items.length === 0 && (
+              <div className="p-8 text-center text-slate-500">
+                No deals yet. Click + New deal to start.
+              </div>
+            )}
+            {dealsQ.data && dealsQ.data.items.length > 0 && (
+              <table className="w-full text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-600">
+                  <tr>
+                    <th className="px-4 py-2">Name</th>
+                    <th className="px-4 py-2">Amount</th>
+                    <th className="px-4 py-2">Status</th>
+                    <th className="px-4 py-2">Expected close</th>
+                    <th className="px-4 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dealsQ.data.items.map((d) => (
+                    <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                      <td className="px-4 py-2 font-medium">
+                        <Link to={`/deals/${d.id}`} className="hover:underline">
+                          {d.name}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2 tabular-nums text-slate-700">
+                        {fmtMoney(d.amount, d.currency)}
+                      </td>
+                      <td className="px-4 py-2">
+                        <StatusBadge status={d.status} />
+                      </td>
+                      <td className="px-4 py-2 text-slate-700">
+                        {fmtDate(d.expected_close_date)}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          onClick={() => setDialog({ mode: "edit", row: d })}
+                          className="mr-2 text-xs text-slate-600 hover:text-slate-900 underline"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete deal "${d.name}"?`)) {
+                              deleteMut.mutate(d.id);
+                            }
+                          }}
+                          className="text-xs text-red-600 hover:text-red-800 underline"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
-        )}
-        {dealsQ.data?.items.length === 0 && (
-          <div className="p-8 text-center text-slate-500">
-            No deals yet. Click + New deal to start tracking opportunities.
-          </div>
-        )}
-        {dealsQ.data && dealsQ.data.items.length > 0 && (
-          <table className="w-full text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-600">
-              <tr>
-                <th className="px-4 py-2">Name</th>
-                <th className="px-4 py-2">Amount</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2">Expected close</th>
-                <th className="px-4 py-2 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dealsQ.data.items.map((d) => (
-                <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                  <td className="px-4 py-2 font-medium">
-                    <Link to={`/deals/${d.id}`} className="hover:underline">
-                      {d.name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2 tabular-nums text-slate-700">
-                    {fmtMoney(d.amount, d.currency)}
-                  </td>
-                  <td className="px-4 py-2">
-                    <StatusBadge status={d.status} />
-                  </td>
-                  <td className="px-4 py-2 text-slate-700">
-                    {fmtDate(d.expected_close_date)}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <button
-                      onClick={() => setDialog({ mode: "edit", row: d })}
-                      className="mr-2 text-xs text-slate-600 hover:text-slate-900 underline"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete deal "${d.name}"?`)) {
-                          deleteMut.mutate(d.id);
-                        }
-                      }}
-                      className="text-xs text-red-600 hover:text-red-800 underline"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         )}
       </div>
 

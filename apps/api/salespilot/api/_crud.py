@@ -14,7 +14,10 @@ that isn't on the allow-list is silently ignored so junk query strings
 don't leak schema info or accidentally match other columns.
 """
 
+from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
+
+from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -40,7 +43,12 @@ def make_crud_router(
     update_schema: type[UpdateT],
     public_schema: type[PublicT],
     filterable_fields: tuple[str, ...] = (),
+    on_before_save: "Callable[[Any, AsyncSession], Awaitable[None]] | None" = None,
 ) -> APIRouter:
+    """`on_before_save` is invoked after fields have been applied but before
+    the final flush, both on create and on update. Use it for business rules
+    that depend on the resulting state of the row (e.g. derive deal.status
+    from the chosen stage)."""
     router = APIRouter(prefix=prefix, tags=[tag])
 
     @router.get("", response_model=Page[public_schema])  # type: ignore[valid-type]
@@ -81,6 +89,8 @@ def make_crud_router(
         data["org_id"] = auth.org_id
         item = model(**data)
         db.add(item)
+        if on_before_save is not None:
+            await on_before_save(item, db)
         await db.flush()
         await db.refresh(item)
         return public_schema.model_validate(item)  # type: ignore[attr-defined]
@@ -100,6 +110,8 @@ def make_crud_router(
         changes = payload.model_dump(exclude_unset=True)
         for k, v in changes.items():
             setattr(item, k, v)
+        if on_before_save is not None:
+            await on_before_save(item, db)
         await db.flush()
         await db.refresh(item)
         return public_schema.model_validate(item)  # type: ignore[attr-defined]
