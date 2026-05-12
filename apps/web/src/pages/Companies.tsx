@@ -1,4 +1,5 @@
 import { ResourcePage, type Column } from "@/components/ResourcePage";
+import type { FieldSpec } from "@/components/FormDialog";
 import { dash, fmtDate } from "@/lib/format";
 
 type Company = {
@@ -7,27 +8,39 @@ type Company = {
   domain: string | null;
   industry: string | null;
   size: string | null;
+  description: string | null;
   created_at: string;
 };
 
 const columns: Column<Company>[] = [
   { header: "Name", cell: (c) => c.name, className: "font-medium" },
-  {
-    header: "Domain",
-    cell: (c) => dash(c.domain),
-    className: "text-slate-700",
-  },
-  {
-    header: "Industry",
-    cell: (c) => dash(c.industry),
-    className: "text-slate-700",
-  },
+  { header: "Domain", cell: (c) => dash(c.domain), className: "text-slate-700" },
+  { header: "Industry", cell: (c) => dash(c.industry), className: "text-slate-700" },
   { header: "Size", cell: (c) => dash(c.size), className: "text-slate-700" },
   {
     header: "Created",
     cell: (c) => fmtDate(c.created_at),
     className: "text-slate-500",
   },
+];
+
+const fields: FieldSpec[] = [
+  { name: "name", label: "Company name", type: "text", required: true },
+  { name: "domain", label: "Domain", type: "text", placeholder: "example.com" },
+  { name: "industry", label: "Industry", type: "text" },
+  {
+    name: "size",
+    label: "Size",
+    type: "select",
+    options: [
+      { value: "1-10", label: "1-10" },
+      { value: "11-50", label: "11-50" },
+      { value: "51-200", label: "51-200" },
+      { value: "201-1000", label: "201-1000" },
+      { value: "1000+", label: "1000+" },
+    ],
+  },
+  { name: "description", label: "Description", type: "textarea", rows: 3 },
 ];
 
 export function Companies() {
@@ -38,6 +51,7 @@ export function Companies() {
       newButtonLabel="+ New company"
       columns={columns}
       emptyMessage="No companies yet."
+      formFields={fields}
     />
   );
 }

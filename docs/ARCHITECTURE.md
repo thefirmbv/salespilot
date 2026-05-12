@@ -99,3 +99,32 @@ the SPA build with `try_files {path} /index.html` for client-side routing.
 - Public API tokens.
 
 These will get their own short ADR-style docs in `docs/` as they land.
+
+## ⚠️ Important: never connect the app as a superuser
+
+Postgres superusers and roles with `BYPASSRLS` **silently bypass all Row
+Level Security policies**, even policies created with `FORCE ROW LEVEL
+SECURITY`. The official `postgres` Docker image creates `POSTGRES_USER`
+as a superuser by default — which means an app that connects with that
+user has no tenant isolation, ever.
+
+We deliberately use two roles:
+
+| Role             | Purpose                | Privileges                                |
+|------------------|------------------------|-------------------------------------------|
+| `salespilot`     | DDL (Alembic migrations) | Superuser, owner of the database         |
+| `salespilot_app` | Application connections | `NOSUPERUSER NOBYPASSRLS`, table grants  |
+
+The app's `.env` sets `POSTGRES_USER=salespilot_app`. Alembic could
+optionally use a separate env to switch to `salespilot` for migrations,
+but for now `alembic upgrade head` is run manually as the owner.
+
+To verify RLS is actually applied for the connecting role, run:
+
+```sql
+SELECT usename, usesuper, usebypassrls FROM pg_user WHERE usename = current_user;
+```
+
+If `usesuper` or `usebypassrls` is `t`, RLS is being bypassed and isolation
+is not enforced.
+

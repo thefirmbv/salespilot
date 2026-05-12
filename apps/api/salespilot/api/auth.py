@@ -17,6 +17,7 @@ from salespilot.config import get_settings
 from salespilot.deps import CurrentAuth, Db, DbNoTenant
 from salespilot.mail import send_magic_link_email
 from salespilot.models.auth import OrgMembership, OrgRole, Organization, User
+from salespilot.models.crm import Pipeline, Stage
 from salespilot.schemas.auth import (
     LoginRequest,
     MagicLinkRequest,
@@ -86,7 +87,33 @@ async def register(data: RegisterRequest, db: DbNoTenant) -> TokenPair:
     membership = OrgMembership(
         id=uuid4(), user_id=user.id, org_id=org.id, role=OrgRole.OWNER
     )
-    db.add_all([org, user, membership])
+
+    # Default sales pipeline with 5 stages, so creating a Deal works
+    # out-of-the-box without first configuring pipelines.
+    pipeline = Pipeline(id=uuid4(), org_id=org.id, name="Sales", is_default=True)
+    default_stages = [
+        ("Lead",        10,  False, False),
+        ("Qualified",   25,  False, False),
+        ("Proposal",    50,  False, False),
+        ("Negotiation", 75,  False, False),
+        ("Won",         100, True,  False),
+        ("Lost",        0,   False, True),
+    ]
+    stages = [
+        Stage(
+            id=uuid4(),
+            org_id=org.id,
+            pipeline_id=pipeline.id,
+            name=name,
+            position=i,
+            probability=prob,
+            is_won=won,
+            is_lost=lost,
+        )
+        for i, (name, prob, won, lost) in enumerate(default_stages)
+    ]
+
+    db.add_all([org, user, membership, pipeline, *stages])
     await db.flush()
     return _issue_pair(user.id, org.id)
 

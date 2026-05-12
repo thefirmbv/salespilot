@@ -1,5 +1,7 @@
 import { ResourcePage, type Column } from "@/components/ResourcePage";
+import type { FieldSpec } from "@/components/FormDialog";
 import { dash, fmtDate } from "@/lib/format";
+import { loadCompanyOptions } from "@/lib/options";
 
 type Contact = {
   id: string;
@@ -7,14 +9,15 @@ type Contact = {
   first_name: string | null;
   last_name: string | null;
   job_title: string | null;
+  phone: string | null;
+  company_id: string | null;
   created_at: string;
 };
 
 const columns: Column<Contact>[] = [
   {
     header: "Name",
-    cell: (c) =>
-      [c.first_name, c.last_name].filter(Boolean).join(" ") || "—",
+    cell: (c) => [c.first_name, c.last_name].filter(Boolean).join(" ") || "—",
     className: "font-medium",
   },
   { header: "Email", cell: (c) => dash(c.email), className: "text-slate-700" },
@@ -26,6 +29,20 @@ const columns: Column<Contact>[] = [
   },
 ];
 
+const fields: FieldSpec[] = [
+  { name: "first_name", label: "First name", type: "text" },
+  { name: "last_name", label: "Last name", type: "text" },
+  { name: "email", label: "Email", type: "email" },
+  { name: "phone", label: "Phone", type: "tel" },
+  { name: "job_title", label: "Job title", type: "text" },
+  {
+    name: "company_id",
+    label: "Company",
+    type: "select-async",
+    loadOptions: loadCompanyOptions,
+  },
+];
+
 export function Contacts() {
   return (
     <ResourcePage<Contact>
@@ -33,7 +50,11 @@ export function Contacts() {
       endpoint="/contacts"
       newButtonLabel="+ New contact"
       columns={columns}
-      emptyMessage="No contacts yet. Create your first one to get started."
+      emptyMessage="No contacts yet. Click + New contact to start."
+      formFields={fields}
+      rowLabel={(c) =>
+        [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email || c.id
+      }
     />
   );
 }

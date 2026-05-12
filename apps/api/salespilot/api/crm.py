@@ -49,6 +49,6 @@ activities_router = make_crud_router(
     tag="activities",
     model=Activity,
     create_schema=ActivityCreate,
-    update_schema=ActivityPublic,  # update schema differs less; keep simple here
+    update_schema=ActivityUpdate,
     public_schema=ActivityPublic,
 )
