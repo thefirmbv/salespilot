@@ -27,6 +27,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from salespilot.models import Base, TenantScoped, Timestamps, UUIDPrimaryKey
 
 
+class CompanySource(StrEnum):
+    SALESPILOT = "salespilot"
+    HALOPSA = "halopsa"            # synced FROM HaloPSA, read-only
+    HALOPSA_PUSHED = "halopsa_pushed"  # was salespilot, pushed TO HaloPSA
+
+
 class Company(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     __tablename__ = "companies"
 
@@ -35,8 +41,15 @@ class Company(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     industry: Mapped[str | None] = mapped_column(String(120))
     size: Mapped[str | None] = mapped_column(String(40))
     description: Mapped[str | None] = mapped_column(Text)
-    # Custom fields: { field_key: value }. Validated against custom_field_definitions.
     custom: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    # HaloPSA linkage
+    source: Mapped[CompanySource] = mapped_column(
+        Enum(CompanySource, name="company_source",
+             values_callable=lambda e: [x.value for x in e]),
+        default=CompanySource.SALESPILOT, nullable=False,
+    )
+    halopsa_id: Mapped[int | None] = mapped_column(Integer)
+    halopsa_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     contacts: Mapped[list["Contact"]] = relationship(back_populates="company")
     deals: Mapped[list["Deal"]] = relationship(back_populates="company")

@@ -1,6 +1,6 @@
 import { ResourcePage, type Column } from "@/components/ResourcePage";
 import type { FieldSpec } from "@/components/FormDialog";
-import { dash, fmtDate } from "@/lib/format";
+import { dash, fmtDate, SourceBadge } from "@/lib/format";
 
 type Company = {
   id: string;
@@ -9,15 +9,29 @@ type Company = {
   industry: string | null;
   size: string | null;
   description: string | null;
+  source: string;
+  halopsa_id: number | null;
   created_at: string;
 };
 
 const columns: Column<Company>[] = [
   { header: "Name", sortKey: "name", cell: (c) => c.name, className: "font-medium" },
-  { header: "Domain",
-    sortKey: "domain", cell: (c) => dash(c.domain), className: "text-slate-700" },
-  { header: "Industry",
-    sortKey: "industry", cell: (c) => dash(c.industry), className: "text-slate-700" },
+  {
+    header: "Source",
+    cell: (c) => <SourceBadge source={c.source} />,
+  },
+  {
+    header: "Domain",
+    sortKey: "domain",
+    cell: (c) => dash(c.domain),
+    className: "text-slate-700",
+  },
+  {
+    header: "Industry",
+    sortKey: "industry",
+    cell: (c) => dash(c.industry),
+    className: "text-slate-700",
+  },
   { header: "Size", cell: (c) => dash(c.size), className: "text-slate-700" },
   {
     header: "Created",

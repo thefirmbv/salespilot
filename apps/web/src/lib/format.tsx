@@ -63,3 +63,24 @@ export function TypeBadge({ type }: { type: string }): ReactNode {
     </span>
   );
 }
+
+
+const sourceLabels: Record<string, { label: string; cls: string }> = {
+  salespilot:     { label: "Prospect",      cls: "bg-slate-100 text-slate-700" },
+  halopsa:        { label: "HaloPSA",       cls: "bg-indigo-100 text-indigo-700" },
+  halopsa_pushed: { label: "→ HaloPSA",     cls: "bg-emerald-100 text-emerald-700" },
+};
+
+export function SourceBadge({ source }: { source: string }): ReactNode {
+  const meta = sourceLabels[source] ?? {
+    label: source,
+    cls: "bg-slate-100 text-slate-700",
+  };
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${meta.cls}`}
+    >
+      {meta.label}
+    </span>
+  );
+}

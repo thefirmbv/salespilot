@@ -36,6 +36,9 @@ class CompanyUpdate(BaseModel):
 class CompanyPublic(CompanyBase):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
+    source: str
+    halopsa_id: int | None = None
+    halopsa_synced_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

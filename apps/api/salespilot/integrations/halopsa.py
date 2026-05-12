@@ -1,0 +1,185 @@
+"""Async HaloPSA REST client.
+
+HaloPSA's API uses OAuth2 client-credentials. Token endpoint:
+    POST {base_url}/auth/token
+        body: grant_type=client_credentials&client_id=...&client_secret=...&scope=...
+
+Resource endpoints live under {base_url}/api/<Resource> and return JSON.
+We hit:
+    GET  /api/Client          list clients
+    GET  /api/Client/{id}     single client
+    POST /api/Client          create client
+    GET  /api/Quotation       list quotations (filterable by client_id)
+
+This client is per-request (built from the org's Integration row). We don't
+share a long-lived client across orgs because every tenant has its own
+HaloPSA tenancy and credentials.
+"""
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import httpx
+from pydantic import BaseModel
+
+
+class HaloPSAError(Exception):
+    """Raised when HaloPSA returns a non-2xx or the token request fails."""
+
+
+class HaloPSACredentials(BaseModel):
+    base_url: str
+    client_id: str
+    client_secret: str
+    tenant: str | None = None
+    scopes: str = "all"
+
+
+def _normalize_base(url: str) -> str:
+    """Accept 'halo.example.com', 'https://halo.example.com', or trailing /."""
+    u = url.strip().rstrip("/")
+    if not u.startswith(("http://", "https://")):
+        u = "https://" + u
+    return u
+
+
+class HaloPSAClient:
+    def __init__(self, creds: HaloPSACredentials, timeout_s: float = 20.0) -> None:
+        self.creds = creds
+        self.base = _normalize_base(creds.base_url)
+        self._token: str | None = None
+        self._token_expires_at: datetime | None = None
+        self._client = httpx.AsyncClient(timeout=timeout_s)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def __aenter__(self) -> "HaloPSAClient":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
+
+    async def _ensure_token(self) -> str:
+        if (
+            self._token
+            and self._token_expires_at
+            and self._token_expires_at > datetime.now(UTC) + timedelta(seconds=30)
+        ):
+            return self._token
+
+        url = f"{self.base}/auth/token"
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": self.creds.client_id,
+            "client_secret": self.creds.client_secret,
+            "scope": self.creds.scopes,
+        }
+        if self.creds.tenant:
+            data["tenant"] = self.creds.tenant
+
+        try:
+            res = await self._client.post(
+                url,
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        except httpx.HTTPError as e:
+            raise HaloPSAError(f"token request failed: {e}") from e
+
+        if res.status_code != 200:
+            raise HaloPSAError(
+                f"token request returned {res.status_code}: {res.text[:300]}"
+            )
+
+        body = res.json()
+        token = body.get("access_token")
+        if not token:
+            raise HaloPSAError(f"token response missing access_token: {body}")
+        self._token = token
+        expires_in = int(body.get("expires_in", 3600))
+        self._token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+        return token
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        token = await self._ensure_token()
+        url = f"{self.base}{path}"
+        headers = kwargs.pop("headers", {})
+        headers["Authorization"] = f"Bearer {token}"
+        headers.setdefault("Accept", "application/json")
+        try:
+            res = await self._client.request(method, url, headers=headers, **kwargs)
+        except httpx.HTTPError as e:
+            raise HaloPSAError(f"{method} {path} failed: {e}") from e
+        if res.status_code >= 400:
+            raise HaloPSAError(
+                f"{method} {path} returned {res.status_code}: {res.text[:500]}"
+            )
+        if not res.content:
+            return None
+        return res.json()
+
+    async def test_connection(self) -> bool:
+        await self._ensure_token()
+        return True
+
+    async def list_clients(
+        self, page_size: int = 100, max_pages: int = 50
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        page = 1
+        while page <= max_pages:
+            data = await self._request(
+                "GET",
+                "/api/Client",
+                params={
+                    "pageinate": "true",
+                    "page_size": page_size,
+                    "page_no": page,
+                    "includeinactive": "false",
+                },
+            )
+            rows: list[dict[str, Any]]
+            if isinstance(data, list):
+                rows = data
+            elif isinstance(data, dict):
+                rows = (
+                    data.get("clients")
+                    or data.get("Clients")
+                    or data.get("records")
+                    or []
+                )
+            else:
+                rows = []
+            out.extend(rows)
+            if len(rows) < page_size:
+                break
+            page += 1
+        return out
+
+    async def get_client(self, client_id: int) -> dict[str, Any]:
+        return await self._request("GET", f"/api/Client/{client_id}")
+
+    async def create_client(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """HaloPSA's /api/Client POST accepts an ARRAY of client objects.
+        Wrap a single payload, then unwrap."""
+        data = await self._request("POST", "/api/Client", json=[payload])
+        if isinstance(data, list) and data:
+            return data[0]
+        if isinstance(data, dict):
+            return data
+        raise HaloPSAError(f"unexpected create_client response: {data!r}")
+
+    async def list_quotations_for_client(
+        self, client_id: int
+    ) -> list[dict[str, Any]]:
+        data = await self._request(
+            "GET",
+            "/api/Quotation",
+            params={"client_id": client_id, "pageinate": "false"},
+        )
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("quotations") or data.get("records") or []
+        return []

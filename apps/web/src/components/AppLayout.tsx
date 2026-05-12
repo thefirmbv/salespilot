@@ -11,14 +11,14 @@ export function AppLayout() {
 
   return (
     <div className="flex min-h-full">
-      <aside className="w-60 border-r border-slate-200 bg-white">
+      <aside className="w-60 border-r border-slate-200 bg-white flex flex-col">
         <div className="px-4 py-5">
           <div className="text-lg font-semibold">SalesPilot</div>
           <div className="text-xs text-slate-500 truncate">
             {me?.current_org?.name ?? "—"}
           </div>
         </div>
-        <nav className="px-2 space-y-1">
+        <nav className="px-2 space-y-1 flex-1">
           {[
             ["/dashboard", "Dashboard"],
             ["/contacts", "Contacts"],
@@ -37,17 +37,27 @@ export function AppLayout() {
             </NavLink>
           ))}
         </nav>
-        <div className="absolute bottom-0 w-60 border-t border-slate-200 p-4">
-          <div className="text-xs text-slate-600 truncate">{me?.user.email}</div>
-          <button
-            onClick={() => {
-              logout();
-              navigate("/login");
-            }}
-            className="mt-2 text-xs text-slate-500 hover:text-slate-900 underline"
+        <div className="border-t border-slate-200 p-2 space-y-1">
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              `${navItem} block ${isActive ? navItemActive : "text-slate-700"}`
+            }
           >
-            Sign out
-          </button>
+            Settings
+          </NavLink>
+          <div className="px-3 pt-2">
+            <div className="text-xs text-slate-600 truncate">{me?.user.email}</div>
+            <button
+              onClick={() => {
+                logout();
+                navigate("/login");
+              }}
+              className="mt-1 text-xs text-slate-500 hover:text-slate-900 underline"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </aside>
       <main className="flex-1 px-8 py-6 overflow-auto">

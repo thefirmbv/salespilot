@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from salespilot.api.auth import router as auth_router
 from salespilot.api.dashboard import router as dashboard_router
+from salespilot.api.integrations import router as integrations_router, companies_extra_router as halopsa_company_router
 from salespilot.api.pipelines import router as pipelines_router
 from salespilot.api.crm import (
     activities_router,
@@ -69,6 +70,8 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix=prefix)
     app.include_router(pipelines_router, prefix=prefix)
     app.include_router(dashboard_router, prefix=prefix)
+    app.include_router(integrations_router, prefix=prefix)
+    app.include_router(halopsa_company_router, prefix=prefix)
     app.include_router(companies_router, prefix=prefix)
     app.include_router(contacts_router, prefix=prefix)
     app.include_router(deals_router, prefix=prefix)
