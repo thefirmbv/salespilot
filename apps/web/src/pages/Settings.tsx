@@ -2,7 +2,7 @@ import { NavLink, Outlet, Navigate } from "react-router-dom";
 
 const tab =
   "px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors";
-const tabActive = "border-slate-900 text-slate-900";
+const tabActive = "border-brand-500 text-slate-900";
 const tabIdle = "border-transparent text-slate-500 hover:text-slate-800";
 
 export function Settings() {

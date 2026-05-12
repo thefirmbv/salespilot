@@ -1,295 +1,142 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "@/lib/api";
-import { fmtDateTime } from "@/lib/format";
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
-type HaloPublic = {
-  id: string;
+type IntegrationSummary = {
   kind: string;
+  label: string;
+  description: string;
+  is_configured: boolean;
   is_enabled: boolean;
-  config_public: {
-    base_url: string | null;
-    client_id: string | null;
-    tenant: string | null;
-    scopes: string | null;
-    client_secret_set: boolean;
-  };
   last_sync_at: string | null;
   last_sync_status: string | null;
-  last_sync_message: string | null;
-  updated_at: string;
-} | null;
-
-type TestResult = { ok: boolean; detail: string; token_present?: boolean };
-type SyncResult = {
-  ok: boolean;
-  detail: string;
-  fetched: number;
-  created: number;
-  updated: number;
+  extra: Record<string, unknown>;
 };
 
-export function IntegrationsSettings() {
-  const qc = useQueryClient();
-  const { data, isLoading } = useQuery<HaloPublic>({
-    queryKey: ["/integrations/halopsa"],
-    queryFn: () => api<HaloPublic>("/integrations/halopsa"),
-  });
+type ComingSoon = {
+  kind: string;
+  label: string;
+  description: string;
+};
 
-  const [baseUrl, setBaseUrl] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [tenant, setTenant] = useState("");
-  const [scopes, setScopes] = useState("all");
-  const [isEnabled, setIsEnabled] = useState(true);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [testMessage, setTestMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const [syncMessage, setSyncMessage] = useState<{ ok: boolean; text: string } | null>(null);
+const COMING_SOON: ComingSoon[] = [
+  { kind: "mailgun", label: "Mailgun", description: "Outbound e-mail via API + verified domain" },
+  { kind: "linkedin", label: "LinkedIn", description: "OAuth login + decision-maker enrichment" },
+];
 
-  // Hydrate the form from existing config (secret is never echoed back).
-  useEffect(() => {
-    if (!data) return;
-    setBaseUrl(data.config_public.base_url ?? "");
-    setClientId(data.config_public.client_id ?? "");
-    setTenant(data.config_public.tenant ?? "");
-    setScopes(data.config_public.scopes ?? "all");
-    setIsEnabled(data.is_enabled);
-  }, [data]);
+// Brand colour per kind. Used for the icon tile.
+const KIND_STYLES: Record<string, { bg: string; fg: string; icon: string }> = {
+  halopsa:     { bg: "bg-brand-50",  fg: "text-brand-700",  icon: "🎧" },
+  prospectpro: { bg: "bg-amber-50",  fg: "text-amber-700",  icon: "📡" },
+  anthropic:   { bg: "bg-purple-50", fg: "text-purple-700", icon: "✨" },
+  mailgun:     { bg: "bg-orange-50", fg: "text-orange-700", icon: "✉️" },
+  linkedin:    { bg: "bg-sky-50",    fg: "text-sky-700",    icon: "in" },
+};
 
-  const saveMut = useMutation({
-    mutationFn: () =>
-      api<HaloPublic>("/integrations/halopsa", {
-        method: "PUT",
-        body: JSON.stringify({
-          is_enabled: isEnabled,
-          config: {
-            base_url: baseUrl,
-            client_id: clientId,
-            client_secret: clientSecret, // empty preserves existing
-            tenant: tenant || null,
-            scopes,
-          },
-        }),
-      }),
-    onSuccess: () => {
-      setSaveMessage("Saved.");
-      setClientSecret("");
-      qc.invalidateQueries({ queryKey: ["/integrations/halopsa"] });
-    },
-    onError: (e) =>
-      setSaveMessage(
-        e instanceof ApiError ? `Save failed: ${e.detail}` : "Save failed",
-      ),
-  });
+function relativeShort(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const diffMs = Date.now() - d.getTime();
+  const m = Math.floor(diffMs / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} u ago`;
+  const days = Math.floor(h / 24);
+  if (days < 30) return `${days} d ago`;
+  return d.toLocaleDateString();
+}
 
-  const testMut = useMutation({
-    mutationFn: () =>
-      api<TestResult>("/integrations/halopsa/test", { method: "POST" }),
-    onSuccess: (r) =>
-      setTestMessage({ ok: r.ok, text: r.detail }),
-    onError: (e) =>
-      setTestMessage({
-        ok: false,
-        text: e instanceof ApiError ? e.detail : "test failed",
-      }),
-  });
-
-  const syncMut = useMutation({
-    mutationFn: () =>
-      api<SyncResult>("/integrations/halopsa/sync", { method: "POST" }),
-    onSuccess: (r) => {
-      setSyncMessage({ ok: r.ok, text: r.detail });
-      qc.invalidateQueries({ queryKey: ["/integrations/halopsa"] });
-      qc.invalidateQueries({ queryKey: ["/companies"] });
-    },
-    onError: (e) =>
-      setSyncMessage({
-        ok: false,
-        text: e instanceof ApiError ? e.detail : "sync failed",
-      }),
-  });
-
-  if (isLoading) return <div className="text-slate-500">Loading…</div>;
-
-  const inputCls =
-    "mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900";
+function ConnectorRow({ i }: { i: IntegrationSummary }) {
+  const style = KIND_STYLES[i.kind] ?? KIND_STYLES.halopsa;
+  const status = i.is_configured && i.is_enabled ? "connected" : i.is_configured ? "paused" : "not_connected";
+  const statusStyle = {
+    connected:     "bg-emerald-100 text-emerald-800",
+    paused:        "bg-amber-100   text-amber-800",
+    not_connected: "bg-slate-100   text-slate-600",
+  }[status];
+  const statusLabel = { connected: "Connected", paused: "Paused", not_connected: "Not connected" }[status];
 
   return (
-    <div className="space-y-6 max-w-2xl">
-      <div className="rounded-lg ring-1 ring-slate-200 bg-white p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">HaloPSA</h2>
-            <p className="text-sm text-slate-500">
-              Connect SalesPilot to your HaloPSA tenant to sync clients in and
-              push prospects out as new HaloPSA clients.
-            </p>
-          </div>
-          {data && (
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={isEnabled}
-                onChange={(e) => setIsEnabled(e.target.checked)}
-              />
-              Enabled
-            </label>
-          )}
+    <div className="flex items-center gap-3 rounded-md border border-slate-200 px-4 py-3 hover:bg-slate-50">
+      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-base ${style.bg} ${style.fg}`}>
+        {style.icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium">{i.label}</div>
+        <div className="text-xs text-slate-500 truncate">
+          {i.description}
+          {i.last_sync_at && <> · synced {relativeShort(i.last_sync_at)}</>}
         </div>
+      </div>
+      <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${statusStyle}`}>
+        {statusLabel}
+      </span>
+      <Link
+        to={`/settings/integrations/${i.kind}`}
+        className="shrink-0 rounded-md border border-slate-300 px-3 py-1 text-xs text-slate-700 hover:bg-white"
+      >
+        {i.is_configured ? "Configure" : "Connect"}
+      </Link>
+    </div>
+  );
+}
 
-        <div className="mt-6 space-y-4">
-          <label className="block">
-            <span className="block text-sm font-medium text-slate-700">
-              Base URL <span className="text-red-500">*</span>
-            </span>
-            <input
-              type="text"
-              required
-              placeholder="halo.your-tenant.com"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              className={inputCls}
-            />
-            <span className="mt-1 block text-xs text-slate-500">
-              Hostname only; https is added automatically.
-            </span>
-          </label>
-
-          <label className="block">
-            <span className="block text-sm font-medium text-slate-700">
-              Client ID <span className="text-red-500">*</span>
-            </span>
-            <input
-              type="text"
-              required
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className={inputCls}
-            />
-          </label>
-
-          <label className="block">
-            <span className="block text-sm font-medium text-slate-700">
-              Client Secret{" "}
-              {!data?.config_public.client_secret_set && (
-                <span className="text-red-500">*</span>
-              )}
-            </span>
-            <input
-              type="password"
-              placeholder={
-                data?.config_public.client_secret_set
-                  ? "•••• (leave empty to keep existing)"
-                  : ""
-              }
-              value={clientSecret}
-              onChange={(e) => setClientSecret(e.target.value)}
-              className={inputCls}
-            />
-          </label>
-
-          <label className="block">
-            <span className="block text-sm font-medium text-slate-700">
-              Tenant (optional)
-            </span>
-            <input
-              type="text"
-              value={tenant}
-              onChange={(e) => setTenant(e.target.value)}
-              className={inputCls}
-            />
-          </label>
-
-          <label className="block">
-            <span className="block text-sm font-medium text-slate-700">
-              Scopes
-            </span>
-            <input
-              type="text"
-              value={scopes}
-              onChange={(e) => setScopes(e.target.value)}
-              className={inputCls}
-            />
-            <span className="mt-1 block text-xs text-slate-500">
-              Space-separated. Use <code>all</code> if unsure.
-            </span>
-          </label>
+function ComingSoonRow({ c }: { c: ComingSoon }) {
+  const style = KIND_STYLES[c.kind];
+  return (
+    <div className="flex items-center gap-3 rounded-md border border-slate-200 px-4 py-3 opacity-70">
+      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-base ${style.bg} ${style.fg}`}>
+        {style.icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium">
+          {c.label}{" "}
+          <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+            Coming soon
+          </span>
         </div>
+        <div className="text-xs text-slate-500 truncate">{c.description}</div>
+      </div>
+      <span className="shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium bg-slate-100 text-slate-500">
+        Not connected
+      </span>
+      <button
+        disabled
+        className="shrink-0 rounded-md border border-slate-200 px-3 py-1 text-xs text-slate-400 cursor-not-allowed"
+      >
+        Connect
+      </button>
+    </div>
+  );
+}
 
-        <div className="mt-6 flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => {
-              setSaveMessage(null);
-              saveMut.mutate();
-            }}
-            disabled={saveMut.isPending || !baseUrl || !clientId || (!data?.config_public.client_secret_set && !clientSecret)}
-            className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
-            {saveMut.isPending ? "Saving…" : data ? "Save changes" : "Connect"}
-          </button>
-          {data && (
-            <>
-              <button
-                onClick={() => {
-                  setTestMessage(null);
-                  testMut.mutate();
-                }}
-                disabled={testMut.isPending}
-                className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-slate-700 ring-1 ring-slate-300 hover:bg-slate-100 disabled:opacity-50"
-              >
-                {testMut.isPending ? "Testing…" : "Test connection"}
-              </button>
-              <button
-                onClick={() => {
-                  setSyncMessage(null);
-                  syncMut.mutate();
-                }}
-                disabled={syncMut.isPending || !data.is_enabled}
-                className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-slate-700 ring-1 ring-slate-300 hover:bg-slate-100 disabled:opacity-50"
-              >
-                {syncMut.isPending ? "Syncing…" : "Sync clients now"}
-              </button>
-            </>
-          )}
-        </div>
+export function IntegrationsSettings() {
+  const q = useQuery<IntegrationSummary[]>({
+    queryKey: ["/integrations"],
+    queryFn: () => api<IntegrationSummary[]>("/integrations"),
+  });
 
-        {saveMessage && (
-          <div className="mt-3 text-sm text-slate-600">{saveMessage}</div>
-        )}
-        {testMessage && (
-          <div
-            className={`mt-3 text-sm ${
-              testMessage.ok ? "text-green-700" : "text-red-600"
-            }`}
-          >
-            {testMessage.text}
-          </div>
-        )}
-        {syncMessage && (
-          <div
-            className={`mt-3 text-sm ${
-              syncMessage.ok ? "text-green-700" : "text-red-600"
-            }`}
-          >
-            {syncMessage.text}
-          </div>
-        )}
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-base font-medium">Integrations</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Connect external systems. Credentials are stored encrypted server-side
+          and never sent back to the browser.
+        </p>
       </div>
 
-      {data && data.last_sync_at && (
-        <div className="rounded-lg ring-1 ring-slate-200 bg-white p-6">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
-            Last sync
-          </h3>
-          <div className="mt-2 text-sm text-slate-700">
-            <div>When: {fmtDateTime(data.last_sync_at)}</div>
-            <div>Status: {data.last_sync_status ?? "—"}</div>
-            {data.last_sync_message && (
-              <div className="mt-1 text-slate-500">{data.last_sync_message}</div>
-            )}
-          </div>
-        </div>
-      )}
+      {q.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+
+      <div className="space-y-2">
+        {(q.data ?? []).map((i) => (
+          <ConnectorRow key={i.kind} i={i} />
+        ))}
+        {COMING_SOON.map((c) => (
+          <ComingSoonRow key={c.kind} c={c} />
+        ))}
+      </div>
     </div>
   );
 }

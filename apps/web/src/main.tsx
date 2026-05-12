@@ -9,13 +9,15 @@ import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Contacts } from "./pages/Contacts";
 import { ContactDetail } from "./pages/ContactDetail";
-import { Companies } from "./pages/Companies";
+import { Customers } from "./pages/Customers";
+import { Prospects } from "./pages/Prospects";
 import { CompanyDetail } from "./pages/CompanyDetail";
 import { Deals } from "./pages/Deals";
 import { DealDetail } from "./pages/DealDetail";
 import { Activities } from "./pages/Activities";
 import { Settings, SettingsIndex } from "./pages/Settings";
 import { IntegrationsSettings } from "./pages/IntegrationsSettings";
+import { IntegrationConfigure } from "./pages/IntegrationConfigure";
 import { AppLayout } from "./components/AppLayout";
 
 const queryClient = new QueryClient({
@@ -42,9 +44,10 @@ createRoot(root).render(
               }
             >
               <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/prospects" element={<Prospects />} />
+              <Route path="/customers" element={<Customers />} />
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/contacts/:id" element={<ContactDetail />} />
-              <Route path="/companies" element={<Companies />} />
               <Route path="/companies/:id" element={<CompanyDetail />} />
               <Route path="/deals" element={<Deals />} />
               <Route path="/deals/:id" element={<DealDetail />} />
@@ -52,6 +55,7 @@ createRoot(root).render(
               <Route path="/settings" element={<Settings />}>
                 <Route index element={<SettingsIndex />} />
                 <Route path="integrations" element={<IntegrationsSettings />} />
+                <Route path="integrations/:kind" element={<IntegrationConfigure />} />
               </Route>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Route>

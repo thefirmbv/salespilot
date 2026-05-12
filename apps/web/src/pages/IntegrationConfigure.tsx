@@ -1,0 +1,261 @@
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, ApiError } from "@/lib/api";
+
+type IntegrationPublic = {
+  id: string;
+  kind: string;
+  is_enabled: boolean;
+  config_public: Record<string, unknown>;
+  last_sync_at: string | null;
+  last_sync_status: string | null;
+  last_sync_message: string | null;
+  updated_at: string;
+};
+
+type TestResult = { ok: boolean; detail: string; token_present?: boolean };
+type SyncResult = { ok: boolean; detail: string; fetched?: number; created?: number; updated?: number };
+
+type FieldDef = {
+  name: string;
+  label: string;
+  type?: "text" | "password" | "url";
+  placeholder?: string;
+  required?: boolean;
+  help?: string;
+  secret?: boolean;
+};
+
+type KindMeta = {
+  label: string;
+  description: string;
+  docsUrl?: string;
+  fields: FieldDef[];
+  supportsSync: boolean;
+};
+
+const KINDS: Record<string, KindMeta> = {
+  halopsa: {
+    label: "HaloPSA",
+    description: "OAuth2 client-credentials. Create an Integration application in HaloPSA → Configuration → Integrations.",
+    docsUrl: "https://halo.haloservicedesk.com/apidoc/info",
+    supportsSync: true,
+    fields: [
+      { name: "base_url", label: "Base URL", placeholder: "halo.example.com", required: true, help: "Your HaloPSA host without https://" },
+      { name: "client_id", label: "Client ID", required: true },
+      { name: "client_secret", label: "Client secret", type: "password", secret: true, required: true, help: "Stored encrypted. Leave blank to keep existing." },
+      { name: "tenant", label: "Tenant (optional)", placeholder: "for shared HaloPSA instances" },
+      { name: "scopes", label: "Scopes", placeholder: "all" },
+    ],
+  },
+  prospectpro: {
+    label: "ProspectPRO",
+    description: "API token authentication. Generate a token in ProspectPRO → Instellingen → API.",
+    docsUrl: "https://docs.prospectpro.nl/",
+    supportsSync: true,
+    fields: [
+      { name: "base_url", label: "Base URL", placeholder: "api.prospectpro.nl", help: "Leave default unless instructed otherwise." },
+      { name: "api_key", label: "API token", type: "password", secret: true, required: true, help: "Stored encrypted. Leave blank to keep existing." },
+    ],
+  },
+  anthropic: {
+    label: "Anthropic (Claude)",
+    description: "Used by the AI Callscript generator on the prospect detail page.",
+    docsUrl: "https://console.anthropic.com/settings/keys",
+    supportsSync: false,
+    fields: [
+      { name: "api_key", label: "API key", type: "password", secret: true, required: true, help: "Stored encrypted. Leave blank to keep existing." },
+      { name: "model", label: "Model", placeholder: "claude-sonnet-4-5-20250929" },
+    ],
+  },
+};
+
+export function IntegrationConfigure() {
+  const { kind = "" } = useParams();
+  const meta = KINDS[kind];
+  const qc = useQueryClient();
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [enabled, setEnabled] = useState(true);
+
+  const integrationQ = useQuery<IntegrationPublic | null>({
+    queryKey: [`/integrations/${kind}`],
+    queryFn: () => api<IntegrationPublic | null>(`/integrations/${kind}`),
+    enabled: !!meta,
+  });
+
+  useEffect(() => {
+    if (integrationQ.data) {
+      setEnabled(integrationQ.data.is_enabled);
+      const cfg = integrationQ.data.config_public;
+      const next: Record<string, string> = {};
+      for (const f of meta?.fields ?? []) {
+        const v = cfg[f.name];
+        if (typeof v === "string") next[f.name] = v;
+      }
+      setForm(next);
+    }
+  }, [integrationQ.data, meta]);
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      api<IntegrationPublic>(`/integrations/${kind}`, {
+        method: "PUT",
+        body: JSON.stringify({ is_enabled: enabled, config: form }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [`/integrations/${kind}`] });
+      qc.invalidateQueries({ queryKey: ["/integrations"] });
+      // Clear out the secret field so we don't keep showing it.
+      const next = { ...form };
+      for (const f of meta?.fields ?? []) {
+        if (f.secret) next[f.name] = "";
+      }
+      setForm(next);
+    },
+  });
+
+  const testMut = useMutation({
+    mutationFn: () =>
+      api<TestResult>(`/integrations/${kind}/test`, { method: "POST" }),
+  });
+
+  const syncMut = useMutation({
+    mutationFn: () =>
+      api<SyncResult>(`/integrations/${kind}/sync`, { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/integrations"] });
+      qc.invalidateQueries({ queryKey: ["/prospects-list"] });
+    },
+  });
+
+  if (!meta) {
+    return (
+      <div>
+        <div className="text-sm text-slate-500">Unknown integration: {kind}</div>
+        <Link to="/settings/integrations" className="text-xs text-brand-600 underline">
+          ← Back to integrations
+        </Link>
+      </div>
+    );
+  }
+
+  const cfg = integrationQ.data?.config_public ?? {};
+
+  return (
+    <div className="max-w-2xl">
+      <div className="mb-4">
+        <Link
+          to="/settings/integrations"
+          className="text-xs text-slate-500 hover:text-slate-900"
+        >
+          ← All integrations
+        </Link>
+        <h2 className="mt-1 text-base font-medium">{meta.label}</h2>
+        <p className="mt-1 text-xs text-slate-500">{meta.description}</p>
+        {meta.docsUrl && (
+          <a
+            href={meta.docsUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-brand-600 underline"
+          >
+            View documentation ↗
+          </a>
+        )}
+      </div>
+
+      <div className="rounded-md border border-slate-200 bg-white p-4">
+        <label className="flex items-center gap-2 mb-4">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="rounded border-slate-300"
+          />
+          <span className="text-sm">Enabled</span>
+        </label>
+
+        <div className="space-y-3">
+          {meta.fields.map((f) => {
+            const fieldName = `${f.name}_set`;
+            const secretSet = f.secret && Boolean(cfg[fieldName]);
+            return (
+              <div key={f.name}>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  {f.label}
+                  {f.required && <span className="text-red-500 ml-0.5">*</span>}
+                </label>
+                <input
+                  type={f.type ?? "text"}
+                  value={form[f.name] ?? ""}
+                  onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}
+                  placeholder={
+                    f.secret && secretSet ? "•••••••• (currently set)" : f.placeholder
+                  }
+                  className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                {f.help && <div className="mt-1 text-[11px] text-slate-500">{f.help}</div>}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => saveMut.mutate()}
+            disabled={saveMut.isPending}
+            className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+          >
+            {saveMut.isPending ? "Saving…" : "Save"}
+          </button>
+          <button
+            onClick={() => testMut.mutate()}
+            disabled={!integrationQ.data || testMut.isPending}
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {testMut.isPending ? "Testing…" : "Test connection"}
+          </button>
+          {meta.supportsSync && (
+            <button
+              onClick={() => syncMut.mutate()}
+              disabled={!integrationQ.data || syncMut.isPending}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {syncMut.isPending ? "Syncing…" : "Sync now"}
+            </button>
+          )}
+        </div>
+
+        {saveMut.isSuccess && (
+          <div className="mt-3 rounded-md bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800">
+            Saved.
+          </div>
+        )}
+        {saveMut.isError && (
+          <div className="mt-3 rounded-md bg-red-50 px-3 py-1.5 text-xs text-red-800">
+            {saveMut.error instanceof ApiError ? saveMut.error.detail : "Save failed"}
+          </div>
+        )}
+        {testMut.data && (
+          <div
+            className={`mt-3 rounded-md px-3 py-1.5 text-xs ${
+              testMut.data.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"
+            }`}
+          >
+            {testMut.data.detail}
+          </div>
+        )}
+        {syncMut.data && (
+          <div
+            className={`mt-3 rounded-md px-3 py-1.5 text-xs ${
+              syncMut.data.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"
+            }`}
+          >
+            {syncMut.data.detail}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

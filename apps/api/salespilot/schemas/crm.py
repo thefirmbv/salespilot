@@ -39,6 +39,15 @@ class CompanyPublic(CompanyBase):
     source: str
     halopsa_id: int | None = None
     halopsa_synced_at: datetime | None = None
+    prospectpro_id: str | None = None
+    prospectpro_synced_at: datetime | None = None
+    employees: int | None = None
+    city: str | None = None
+    country: str | None = None
+    mail_platform: str = "unknown"
+    lead_score: int = 0
+    last_visit_at: datetime | None = None
+    pageview_count_30d: int = 0
     created_at: datetime
     updated_at: datetime
 

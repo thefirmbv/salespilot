@@ -65,13 +65,20 @@ def make_crud_router(
         count_stmt = select(func.count()).select_from(model)
 
         # Apply allow-listed filters from the query string.
+        # `?field=value` does an equality match.
+        # `?field__in=a,b,c` does an IN match (comma-separated).
         for key in filterable_fields:
-            raw = request.query_params.get(key)
-            if raw is None or raw == "":
-                continue
             col = getattr(model, key)
-            stmt = stmt.where(col == raw)
-            count_stmt = count_stmt.where(col == raw)
+            raw = request.query_params.get(key)
+            if raw not in (None, ""):
+                stmt = stmt.where(col == raw)
+                count_stmt = count_stmt.where(col == raw)
+            raw_in = request.query_params.get(f"{key}__in")
+            if raw_in:
+                values = [v.strip() for v in raw_in.split(",") if v.strip()]
+                if values:
+                    stmt = stmt.where(col.in_(values))
+                    count_stmt = count_stmt.where(col.in_(values))
 
         # Free-text search across searchable_fields.
         q = request.query_params.get("q")

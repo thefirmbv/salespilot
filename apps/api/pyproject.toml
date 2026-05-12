@@ -43,6 +43,8 @@ dev = [
     "pytest-asyncio>=0.25",
     "pytest-cov>=6.0",
     "httpx>=0.28",
+    "dnspython>=2.7",
+    "anthropic>=0.40",
     "ruff>=0.9",
     "mypy>=1.14",
     "types-passlib",

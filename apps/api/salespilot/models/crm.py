@@ -27,6 +27,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from salespilot.models import Base, TenantScoped, Timestamps, UUIDPrimaryKey
 
 
+class MailPlatform(StrEnum):
+    M365 = "m365"
+    GOOGLE = "google"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
 class CompanySource(StrEnum):
     SALESPILOT = "salespilot"
     HALOPSA = "halopsa"            # synced FROM HaloPSA, read-only
@@ -50,6 +57,26 @@ class Company(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     )
     halopsa_id: Mapped[int | None] = mapped_column(Integer)
     halopsa_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # ProspectPRO linkage
+    prospectpro_id: Mapped[str | None] = mapped_column(String(80))
+    prospectpro_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Enrichment
+    employees: Mapped[int | None] = mapped_column(Integer)
+    city: Mapped[str | None] = mapped_column(String(120))
+    country: Mapped[str | None] = mapped_column(String(2))
+    mail_platform: Mapped[MailPlatform] = mapped_column(
+        Enum(MailPlatform, name="mail_platform",
+             values_callable=lambda e: [x.value for x in e]),
+        default=MailPlatform.UNKNOWN, nullable=False,
+    )
+    mail_platform_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Lead scoring + visitor metrics
+    lead_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_visit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pageview_count_30d: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # AI callscript cache
+    callscript_json: Mapped[dict | None] = mapped_column(JSONB)
+    callscript_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     contacts: Mapped[list["Contact"]] = relationship(back_populates="company")
     deals: Mapped[list["Deal"]] = relationship(back_populates="company")

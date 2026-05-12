@@ -37,6 +37,8 @@ type Props<T extends { id: string }> = {
   filters?: ExtraFilter[];
   /** Rows per page. Default 50. */
   pageSize?: number;
+  /** Always-applied query params that the user cannot override. */
+  baseQuery?: Record<string, string>;
 };
 
 export function ResourcePage<T extends { id: string }>({
@@ -61,6 +63,7 @@ export function ResourcePage<T extends { id: string }>({
   searchPlaceholder = "Search…",
   filters = [],
   pageSize = 50,
+  baseQuery = {},
 }: Props<T>) {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
@@ -83,6 +86,7 @@ export function ResourcePage<T extends { id: string }>({
 
   // Build the request query.
   const requestParams = new URLSearchParams();
+for (const [k, v] of Object.entries(baseQuery)) requestParams.set(k, v);
   requestParams.set("limit", String(pageSize));
   if (offset) requestParams.set("offset", String(offset));
   if (debouncedQ) requestParams.set("q", debouncedQ);

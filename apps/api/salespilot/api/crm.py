@@ -56,8 +56,10 @@ companies_router = make_crud_router(
     create_schema=CompanyCreate,
     update_schema=CompanyUpdate,
     public_schema=CompanyPublic,
+    filterable_fields=("source", "mail_platform"),
     searchable_fields=("name", "domain", "industry", "description"),
-    sortable_fields=("name", "domain", "industry", "size", "updated_at"),
+    sortable_fields=("name", "lead_score", "last_visit_at", "pageview_count_30d", "updated_at"),
+    default_sort="-lead_score",
 )
 
 contacts_router = make_crud_router(

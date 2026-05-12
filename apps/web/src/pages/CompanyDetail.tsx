@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { FormDialog, type FieldSpec, type FormValues } from "@/components/FormDialog";
 import { DetailHeader, FieldList } from "@/components/DetailHeader";
+import { ProspectPanel } from "@/components/ProspectPanel";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { dash, fmtDate, fmtDateTime, fmtMoney, SourceBadge, StatusBadge } from "@/lib/format";
 
@@ -17,6 +18,13 @@ type Company = {
   source: string;
   halopsa_id: number | null;
   halopsa_synced_at: string | null;
+  employees: number | null;
+  city: string | null;
+  country: string | null;
+  mail_platform: "m365" | "google" | "other" | "unknown";
+  lead_score: number;
+  last_visit_at: string | null;
+  pageview_count_30d: number;
   created_at: string;
 };
 type Contact = {
@@ -140,16 +148,20 @@ export function CompanyDetail() {
   return (
     <div className="space-y-6">
       <DetailHeader
-        backTo="/companies"
-        backLabel="All companies"
+        backTo={c.source === "halopsa" ? "/customers" : "/prospects"}
+        backLabel={c.source === "halopsa" ? "All customers" : "All prospects"}
         title={c.name}
         subtitle={c.industry ?? undefined}
         onEdit={() => setEditing(true)}
         onDelete={async () => {
           await deleteMut.mutateAsync();
-          navigate("/companies");
+          navigate(c.source === "halopsa" ? "/customers" : "/prospects");
         }}
       />
+
+      {(c.source === "salespilot" || c.source === "halopsa_pushed") && (
+        <ProspectPanel company={c} />
+      )}
 
       <div className="rounded-lg ring-1 ring-slate-200 bg-white p-5">
         <div className="mb-4 flex flex-wrap items-center gap-2">
