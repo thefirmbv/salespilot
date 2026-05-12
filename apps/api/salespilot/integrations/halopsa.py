@@ -173,13 +173,30 @@ class HaloPSAClient:
     async def list_quotations_for_client(
         self, client_id: int
     ) -> list[dict[str, Any]]:
-        data = await self._request(
-            "GET",
-            "/api/Quotation",
-            params={"client_id": client_id, "pageinate": "false"},
-        )
+        return await self._list_quotations(client_id=client_id)
+
+    async def list_all_quotations(self) -> list[dict[str, Any]]:
+        """Single call returning all quotations (with details) across all clients."""
+        return await self._list_quotations(client_id=None)
+
+    async def _list_quotations(
+        self, client_id: int | None
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "pageinate": "false",
+            # IMPORTANT: without this, response omits status, expiry_date, total, etc.
+            "include_details": "true",
+        }
+        if client_id is not None:
+            params["client_id"] = client_id
+        data = await self._request("GET", "/api/Quotation", params=params)
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
-            return data.get("quotations") or data.get("records") or []
+            return (
+                data.get("quotes")
+                or data.get("quotations")
+                or data.get("records")
+                or []
+            )
         return []

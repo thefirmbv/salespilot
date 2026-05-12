@@ -33,10 +33,17 @@ function useCounts() {
     queryFn: () => api("/activities?limit=1"),
     refetchInterval: 60_000,
   });
+  const quotations = useQuery<{ open_count: number; expiring_soon_count: number; expired_count: number }>({
+    queryKey: ["sidebar-quotations-summary"],
+    queryFn: () => api("/quotations/summary"),
+    refetchInterval: 60_000,
+  });
   return {
     prospects: prospects.data?.total ?? 0,
     customers: customers.data?.total ?? 0,
     activities: activities.data?.total ?? 0,
+    // Show open + expiring as a single "needs attention" badge.
+    quotations_open: (quotations.data?.open_count ?? 0) + (quotations.data?.expiring_soon_count ?? 0),
   };
 }
 
@@ -181,7 +188,9 @@ export function AppLayout() {
     },
     {
       title: "External",
-      items: [{ to: "/quotations", label: "Quotations", icon: "globe" }],
+      items: [
+        { to: "/quotations", label: "Quotations", icon: "globe", badge: counts.quotations_open },
+      ],
     },
   ];
 

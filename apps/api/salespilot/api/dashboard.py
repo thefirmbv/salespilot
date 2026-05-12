@@ -182,6 +182,64 @@ async def _counts(db: AsyncSession) -> dict[str, int]:
     return {"contacts": int(contacts), "companies": int(companies)}
 
 
+async def _quotations_summary(db: AsyncSession) -> dict[str, Any]:
+    """KPI roll-up over the quotations table. Mirrors QuotationSummary."""
+    from datetime import timedelta as _td
+    from decimal import Decimal as _D
+    from salespilot.models.quotation import Quotation
+
+    now = datetime.now(UTC)
+    fourteen = now - _td(days=14)
+    thirty = now - _td(days=30)
+    ninety = now - _td(days=90)
+
+    rows = (await db.execute(select(Quotation))).scalars().all()
+    open_count = 0
+    open_amount = _D("0")
+    expiring = 0
+    expired = 0
+    accepted_30d_count = 0
+    accepted_30d_amount = _D("0")
+    accepted_90d = 0
+    rejected_90d = 0
+    for q in rows:
+        amount = q.amount_gross or q.amount_net or _D("0")
+        if q.status == "sent":
+            if q.valid_until is None or q.valid_until > now:
+                open_count += 1
+                open_amount += amount
+            if q.sent_at is not None and thirty <= q.sent_at <= fourteen:
+                expiring += 1
+            if q.valid_until is not None and q.valid_until <= now:
+                expired += 1
+        elif q.status == "expired":
+            expired += 1
+        elif q.status == "accepted":
+            if q.accepted_at and q.accepted_at >= thirty:
+                accepted_30d_count += 1
+                accepted_30d_amount += amount
+            if q.accepted_at and q.accepted_at >= ninety:
+                accepted_90d += 1
+        elif q.status == "rejected":
+            if q.rejected_at and q.rejected_at >= ninety:
+                rejected_90d += 1
+
+    hit_rate = 0.0
+    if accepted_90d + rejected_90d > 0:
+        hit_rate = round(accepted_90d / (accepted_90d + rejected_90d) * 100, 1)
+
+    return {
+        "open_count": open_count,
+        "open_amount": str(open_amount),
+        "expiring_soon_count": expiring,
+        "expired_count": expired,
+        "accepted_count_30d": accepted_30d_count,
+        "accepted_amount_30d": str(accepted_30d_amount),
+        "hit_rate_90d": hit_rate,
+        "currency": "EUR",
+    }
+
+
 @router.get("")
 async def get_dashboard(db: Db) -> dict[str, Any]:
     now = datetime.now(UTC)
@@ -200,4 +258,5 @@ async def get_dashboard(db: Db) -> dict[str, Any]:
         "top_open_deals": await _top_open_deals(db, 5),
         "recent_activities": await _recent_activities(db, 10),
         "totals": await _counts(db),
+        "quotations": await _quotations_summary(db),
     }

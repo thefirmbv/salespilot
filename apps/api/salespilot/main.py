@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from salespilot.api.auth import router as auth_router
 from salespilot.api.dashboard import router as dashboard_router
 from salespilot.api.autopilot import router as autopilot_router
+from salespilot.api.quotations import router as quotations_router
 from salespilot.api.jobs_and_webhooks import (
     internal_router as autopilot_internal_router,
     webhooks_router as autopilot_webhooks_router,
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(deals_router, prefix=prefix)
     app.include_router(activities_router, prefix=prefix)
     app.include_router(autopilot_router, prefix=prefix)
+    app.include_router(quotations_router, prefix=prefix)
     app.include_router(autopilot_internal_router, prefix=prefix)
     app.include_router(autopilot_oauth_router, prefix=prefix)
     # Webhooks are intentionally mounted WITHOUT auth dependency; signature

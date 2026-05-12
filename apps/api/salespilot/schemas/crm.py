@@ -155,6 +155,8 @@ class ActivityPublic(ActivityBase):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     author_id: UUID | None
+    quotation_id: UUID | None = None
+    reminder_kind: str | None = None
     created_at: datetime
     updated_at: datetime
 

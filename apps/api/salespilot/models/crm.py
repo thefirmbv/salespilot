@@ -213,6 +213,11 @@ class Activity(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     author_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+    # Link back to a quotation if this activity is a follow-up reminder.
+    quotation_id: Mapped[UUID | None] = mapped_column()
+    # Marks the kind of automatic reminder, e.g. 'quote_followup_14d' or
+    # 'quote_followup_28d'. Null for manually-created activities.
+    reminder_kind: Mapped[str | None] = mapped_column(String(40))
 
 
 class CustomFieldType(StrEnum):
