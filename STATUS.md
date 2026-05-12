@@ -1,56 +1,89 @@
 # SalesPilot — STATUS
 
-Last updated: 2026-05-12, end of session "prospects + AI callscript build"
+Last updated: 2026-05-12 (autopilot sessie)
 
 ## Live
 
 - URL: https://sales.hostingportal.org
-- Login: `founder@hostingportal.org` / `replace-me-immediately-pls` *(placeholder — change!)*
+- Login: `founder@hostingportal.org` / `replace-me-immediately-pls` *(placeholder — wijzigen!)*
 - Demo org: `demo@example.com` / `demo-pw-long-enough`
-- Brand colour: IT-Gemak cyan `#128ece` (Tailwind `brand-500`)
+- Brand: IT-Gemak cyan `#128ece` (Tailwind `brand-500`)
 
-## What works end-to-end
+## Werkt end-to-end
 
-- Multi-tenant CRM (RLS, app role `salespilot_app`)
-- Auth, registration auto-creates a default Sales pipeline
-- Companies / Contacts / Deals / Activities CRUD with search/filter/sort/pagination
-- Kanban board for deals
-- Dashboard with KPIs
-- HaloPSA integration: read clients (421 synced), push prospect → HaloPSA, fetch quotations
-- New: **Prospects** page with lead scoring, mail-platform icons, ICP-fit badges, filters
-- New: **Customers** page (HaloPSA-synced + halopsa-pushed companies, baseQuery filtered)
-- New: **Settings → Integrations** connector grid (HaloPSA, ProspectPRO, Anthropic + 2 coming-soon placeholders)
-- New: Per-integration configure page with Save / Test / Sync now
-- New: **ProspectPanel** on company detail — KPI strip, AI callscript, page-visit list, score breakdown, MX-refresh button
-- New: Sidebar restructured into Overview / Pipeline / External + Settings, with live counts and brand-500 active items
+- Multi-tenant CRM met RLS, app role `salespilot_app`
+- Auth + registratie auto-creates default Sales pipeline
+- Companies / Contacts / Deals / Activities CRUD, search/filter/sort/pagination
+- Kanban board voor deals
+- Dashboard met KPIs
+- **HaloPSA**: read clients (421 synced), push prospect → HaloPSA, fetch quotations
+- **ProspectPRO**: connected, sync werkt
+- **Prospects**: lead scoring, mail-platform icons, ICP-fit badges, filters
+- **Customers**: HaloPSA-synced + halopsa-pushed companies
+- **Settings → Integrations** connector grid (HaloPSA, ProspectPRO, Anthropic, Mailgun, LinkedIn)
+- **ProspectPanel** op company detail: KPI strip, AI callscript, page-visit list, score breakdown, MX-refresh
+- **Sidebar** secties: Overview / Pipeline / Outreach / External + Settings
+- **Sequences (NEW)**: drie default campaigns geseed:
+  - Hot — 24h personal outreach (1 mail, status=draft)
+  - Warm — 3-step drip (mail → 5d → mail 2 → 7d → mail 3, status=draft)
+  - Cold — slow nurture (1 mail, status=draft)
+- **LinkedIn (NEW)**: outreach-kanban (To do / Sent / Connected / Replied), Posts tab skelet
+- **Autopilot tick (NEW)**: cron `*/5 * * * *` op host roept `/internal/autopilot/tick` aan met internal token. Token in `/opt/salespilot/secrets/autopilot.env` (chmod 600)
+- **Mailgun webhooks (NEW)**: `/api/v1/webhooks/mailgun` (events) + `/api/v1/webhooks/mailgun-inbound` (replies) — signature-verified, geen auth-header
 
-## What needs operator action
+## Wat jij nu doet
 
-1. **Plak ProspectPRO API token** in Settings → Integrations → ProspectPRO → Configure → API token. Save → Test connection → Sync now.
-2. **Plak Anthropic API key** in Settings → Integrations → Anthropic (Claude) → Configure → API key. Save → Test connection. Model defaults to `claude-sonnet-4-5-20250929`.
-3. **Wijzig founder-wachtwoord** (`founder@hostingportal.org`) — staat nu op een placeholder.
+1. **Mailgun-account** opzetten + sending-domain `mail.it-gemak.nl` verifieren (SPF, DKIM, DMARC)
+2. **MX-record** voor inbound: route `mail.it-gemak.nl` MX naar Mailgun's mxa.mailgun.org / mxb.mailgun.org als je replies wil ontvangen
+3. **Webhooks koppelen in Mailgun**:
+   - Events: `https://sales.hostingportal.org/api/v1/webhooks/mailgun` (delivered, opened, bounced, complained, unsubscribed)
+   - Inbound route → `https://sales.hostingportal.org/api/v1/webhooks/mailgun-inbound` met match recipient `^.*@mail\.it-gemak\.nl$`
+4. **Mailgun-key** plakken in Settings → Integrations → Mailgun → Configure
+   - Domain: `mail.it-gemak.nl`
+   - API key: jouw Mailgun Domain Sending key
+   - Webhook signing key: jouw Mailgun HTTP webhook signing key
+   - Default from name + email naar de virtuele naam die je gebruikt
+5. **Sequence activeren**: ga naar Sequences → kies een (begin met Warm) → Save met status `active`
+6. **Anthropic-key** plakken (Settings → Integrations → Anthropic) zodra je een account hebt — nodig voor de AI callscript
 
 ## Architectuur-notities
 
 - Companies-tabel: `source ∈ {salespilot, halopsa, halopsa_pushed}`
-  - `salespilot` = prospect, editable
-  - `halopsa` = read-only (synced from HaloPSA)
-  - `halopsa_pushed` = was prospect, geupload naar HaloPSA, editable
-- Lead scoring is deterministisch transparant in `salespilot/integrations/scoring.py`; max 100, bucket hot≥80 / warm≥50 / cold. Score breakdown wordt on-demand opnieuw berekend in de ProspectPanel zodat de UI kan tonen *waarom* een score is wat 'ie is.
-- Mail-platform detectie via MX-records (`dnspython`), cached in `companies.mail_platform` + `mail_platform_checked_at`. Refresh-knop op company detail.
-- AI callscript via Anthropic Messages API met JSON-only output. Fallback template als key ontbreekt of call faalt → UI blijft werken. Cached in `companies.callscript_json` + `callscript_generated_at`.
-- Visitor events tabel (`visitor_events`) is bron-onafhankelijk: ProspectPRO nu, Leadinfo / Google Analytics later. RLS aan, grant aan `salespilot_app`.
-- ProspectPRO REST API: base `https://api.prospectpro.nl/v1`, auth via `X-Token-Auth` header. Sync trekt prospects + (per visitor-prospect) pageviews binnen.
+- Lead scoring: deterministisch transparant in `integrations/scoring.py`, max 100, bucket hot≥80 / warm≥50 / cold
+- Mail-platform: MX-lookup via dnspython, cached + refresh-knop
+- AI callscript: Anthropic Messages API, JSON-only, fallback template als key ontbreekt
+- Visitor events: bron-onafhankelijk, RLS aan
+- Sequences:
+  - Tabellen `sequences`, `sequence_steps`, `enrollments`, `messages`, `linkedin_tasks`, `mail_suppression`, `linkedin_posts`
+  - Auto-enrollment loopt enkel voor sequences met `status='active'` en `auto_enroll_bucket` gevuld
+  - `score_at_enroll` + `bucket_at_enroll` worden opgeslagen — bucket-evaluatie staat stil zodra geenrolleerd ("frozen")
+  - Stopt op reply, unsubscribe, of handmatige stop
+  - `send_window_json`: `{days: [1-7], slots: [{start, end}], timezone}` — di-do default 09-11 en 14-16
+  - Cooldown 48u tussen acties; daily_limit 25 mails per dag per sequence
+  - Bij missende Mailgun-config: enrollment wordt 1h vertraagd (niet definitief gestopt)
+- Mailgun integratie:
+  - Sending domain configureerbaar (jouw `mail.it-gemak.nl`)
+  - Default from-name/email/reply-to configureerbaar in integratie
+  - Per-sequence overrides mogelijk in editor
+  - Signature-verified webhooks voor events + inbound
+- LinkedIn outreach:
+  - Tasks worden door autopilot aangemaakt voor `linkedin_connect/dm/like/visit` stappen
+  - Verzending niet automatisch — UI heeft Copy + Open ↗ knoppen, jij voert in LinkedIn uit
+  - Status: To do / Sent / Connected / Replied / Skipped (handmatig of via webhook)
+  - LinkedIn API integratie (officieel, ban-risico=nul) staat voor posts klaar maar OAuth-flow nog niet activated
 
 ## TODO (volgende sessie kandidaten)
 
-- [ ] Encryptie-at-rest voor `integrations.config_json` secrets (nu plain JSONB)
-- [ ] Cron-sync voor HaloPSA + ProspectPRO (nu handmatig via knop)
-- [ ] `/quotations` top-level pagina (cross-company HaloPSA quotations)
-- [ ] Auto-refresh lead score na nieuwe pageview-insert (nu alleen tijdens sync)
-- [ ] Mailgun integratie (outbound mail vanaf prospect-detail)
-- [ ] LinkedIn integratie (decision-maker enrichment)
-- [ ] Pipeline-management UI, Custom fields UI, CSV import, forgot-password flow
+- [ ] Mailgun webhook-validatie end-to-end testen met echte Mailgun-events
+- [ ] Reply-detection: from-adres matchen tegen bestaande enrollment-recipient → status=replied
+- [ ] LinkedIn OAuth-flow afmaken (callback bestaat al)
+- [ ] LinkedIn posts UI volledig maken
+- [ ] AI-rewrite knop in sequence editor activeren (gebruik Anthropic key)
+- [ ] Per-prospect "in sequence X, stap 2/3" tonen op company detail + stop-knop
+- [ ] Encryptie-at-rest voor `integrations.config_json` secrets
+- [ ] `/quotations` top-level pagina
 - [ ] Postgres-backups cron
 - [ ] Image pinning in compose
-- [ ] Verwijder oude `/companies` route na bevestiging dat Customers+Prospects volledig dekken
+- [ ] Founder-password wijzigen (placeholder!)
+- [ ] `Daily limit` enforcer in scheduler (niet meer dan X verzendingen per 24u per sequence)
+- [ ] Smart-send window in compute_next_action_at echt respecteren (niet net buiten window plannen)

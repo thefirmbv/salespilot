@@ -69,6 +69,34 @@ const KINDS: Record<string, KindMeta> = {
       { name: "model", label: "Model", placeholder: "claude-sonnet-4-5-20250929" },
     ],
   },
+  mailgun: {
+    label: "Mailgun",
+    description: "Outbound mail for sequences and inbound reply detection. Sending domain must be verified in Mailgun first (SPF/DKIM/DMARC).",
+    docsUrl: "https://documentation.mailgun.com/en/latest/",
+    supportsSync: false,
+    fields: [
+      { name: "base_url", label: "API base URL", placeholder: "api.eu.mailgun.net", help: "Use api.eu.mailgun.net for EU region, api.mailgun.net for US." },
+      { name: "domain", label: "Sending domain", required: true, placeholder: "mail.it-gemak.nl", help: "The verified Mailgun sending domain. Visible 'from' address is set per-sequence." },
+      { name: "default_from_name", label: "Default from name", placeholder: "Jan de Boer" },
+      { name: "default_from_email", label: "Default from email", placeholder: "jan@it-gemak.nl", help: "Used as default in new sequences. Per-sequence overrides possible." },
+      { name: "default_reply_to", label: "Default reply-to", placeholder: "jan@it-gemak.nl" },
+      { name: "api_key", label: "API key (Domain Sending key)", type: "password", secret: true, required: true, help: "Stored encrypted. Leave blank to keep existing." },
+      { name: "webhook_signing_key", label: "HTTP webhook signing key", type: "password", secret: true, help: "From Mailgun → Sending → Webhooks. Used to verify event + inbound webhooks." },
+    ],
+  },
+  linkedin: {
+    label: "LinkedIn",
+    description: "Officiele LinkedIn API — nul ban-risico. Voor post-scheduling en outreach task tracking. OAuth-flow volgt zodra je een LinkedIn-app hebt gemaakt.",
+    docsUrl: "https://learn.microsoft.com/en-us/linkedin/marketing/",
+    supportsSync: false,
+    fields: [
+      { name: "client_id", label: "Client ID", help: "From your LinkedIn Developer app." },
+      { name: "client_secret", label: "Client secret", type: "password", secret: true, help: "Stored encrypted. Leave blank to keep existing." },
+      { name: "person_urn", label: "Person URN (optional)", placeholder: "urn:li:person:XXXX", help: "For posting from your personal profile." },
+      { name: "organization_urn", label: "Organization URN (optional)", placeholder: "urn:li:organization:NNNN", help: "For posting from your company page." },
+      { name: "access_token", label: "Access token (manual until OAuth flow)", type: "password", secret: true, help: "Will be replaced by OAuth flow in a future update." },
+    ],
+  },
 };
 
 export function IntegrationConfigure() {

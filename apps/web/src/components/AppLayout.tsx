@@ -84,6 +84,18 @@ const ICONS = {
       <path strokeWidth={1.6} d="M3 12h18M12 3a13 13 0 010 18M12 3a13 13 0 000 18" />
     </>
   ),
+  send: (
+    <path
+      strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6}
+      d="M22 2L11 13M22 2l-7 20-4-9-9-4z"
+    />
+  ),
+  linkedin: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" strokeWidth={1.6} />
+      <path strokeWidth={1.6} strokeLinecap="round" d="M8 10v8M8 6.5v.5M12 18v-4a2 2 0 014 0v4M12 14v4" />
+    </>
+  ),
   settings: (
     <path
       strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6}
@@ -158,6 +170,13 @@ export function AppLayout() {
         { to: "/deals", label: "Deals", icon: "coin" },
         { to: "/contacts", label: "Contacts", icon: "users" },
         { to: "/activities", label: "Activities", icon: "checklist", badge: counts.activities, badgeTone: "danger" },
+      ],
+    },
+    {
+      title: "Outreach",
+      items: [
+        { to: "/sequences", label: "Sequences", icon: "send" },
+        { to: "/linkedin", label: "LinkedIn", icon: "linkedin" },
       ],
     },
     {

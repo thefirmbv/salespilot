@@ -19,10 +19,7 @@ type ComingSoon = {
   description: string;
 };
 
-const COMING_SOON: ComingSoon[] = [
-  { kind: "mailgun", label: "Mailgun", description: "Outbound e-mail via API + verified domain" },
-  { kind: "linkedin", label: "LinkedIn", description: "OAuth login + decision-maker enrichment" },
-];
+const COMING_SOON: ComingSoon[] = [];
 
 // Brand colour per kind. Used for the icon tile.
 const KIND_STYLES: Record<string, { bg: string; fg: string; icon: string }> = {

@@ -17,6 +17,7 @@ from salespilot.models import auth as _auth  # noqa: F401
 from salespilot.models import crm as _crm  # noqa: F401
 from salespilot.models import integrations as _int  # noqa: F401
 from salespilot.models import visitor as _vis  # noqa: F401
+from salespilot.models import autopilot as _auto  # noqa: F401
 
 config = context.config
 

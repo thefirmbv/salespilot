@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     env: Literal["development", "staging", "production"] = "development"
     log_level: str = "INFO"
     app_base_url: AnyHttpUrl = Field(default="http://localhost:8000")  # type: ignore[arg-type]
+    public_base_url: str = "https://sales.hostingportal.org"
+    autopilot_internal_token: SecretStr = SecretStr("change-me-cron-token")
 
     # --- Database ---
     postgres_user: str = "salespilot"

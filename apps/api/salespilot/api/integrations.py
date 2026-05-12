@@ -57,6 +57,8 @@ companies_extra_router = APIRouter(prefix="/companies", tags=["companies"])
 HALOPSA_KIND = "halopsa"
 PROSPECTPRO_KIND = "prospectpro"
 ANTHROPIC_KIND = "anthropic"
+MAILGUN_KIND = "mailgun"
+LINKEDIN_KIND = "linkedin"
 
 
 def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -77,6 +79,24 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
         return {
             "model": cfg.get("model") or "claude-sonnet-4-5-20250929",
             "api_key_set": bool(cfg.get("api_key")),
+        }
+    if kind == MAILGUN_KIND:
+        return {
+            "base_url": cfg.get("base_url") or "api.eu.mailgun.net",
+            "domain": cfg.get("domain"),
+            "default_from_name": cfg.get("default_from_name"),
+            "default_from_email": cfg.get("default_from_email"),
+            "default_reply_to": cfg.get("default_reply_to"),
+            "api_key_set": bool(cfg.get("api_key")),
+            "webhook_signing_key_set": bool(cfg.get("webhook_signing_key")),
+        }
+    if kind == LINKEDIN_KIND:
+        return {
+            "client_id": cfg.get("client_id"),
+            "person_urn": cfg.get("person_urn"),
+            "organization_urn": cfg.get("organization_urn"),
+            "client_secret_set": bool(cfg.get("client_secret")),
+            "access_token_set": bool(cfg.get("access_token")),
         }
     return {}
 
@@ -107,6 +127,8 @@ async def list_integrations(db: Db) -> list[IntegrationSummary]:
         (HALOPSA_KIND, "HaloPSA", "PSA / ticketing — read clients, push prospects, fetch quotations"),
         (PROSPECTPRO_KIND, "ProspectPRO", "B2B prospect database + website visitor identification"),
         (ANTHROPIC_KIND, "Anthropic (Claude)", "AI-generated callscripts on the prospect detail page"),
+        (MAILGUN_KIND, "Mailgun", "Outbound mail + inbound reply detection for sequences"),
+        (LINKEDIN_KIND, "LinkedIn", "Post scheduling + outreach task tracking"),
     ]
     out: list[IntegrationSummary] = []
     for kind, label, desc in known:
@@ -137,7 +159,7 @@ def _make_kind_routes(kind: str):
     async def upsert_integration(data: IntegrationUpsert, auth: CurrentAuth, db: Db) -> IntegrationPublic:
         row = await _get_integration(db, kind)
         cfg_dict = dict(data.config or {})
-        secret_keys = ("client_secret", "api_key")
+        secret_keys = ("client_secret", "api_key", "webhook_signing_key", "access_token", "refresh_token")
         if row is not None:
             existing = row.config_json or {}
             for sk in secret_keys:
@@ -159,6 +181,8 @@ def _make_kind_routes(kind: str):
 _make_kind_routes(HALOPSA_KIND)
 _make_kind_routes(PROSPECTPRO_KIND)
 _make_kind_routes(ANTHROPIC_KIND)
+_make_kind_routes(MAILGUN_KIND)
+_make_kind_routes(LINKEDIN_KIND)
 
 
 # ---- HaloPSA test/sync ----
@@ -565,3 +589,75 @@ async def make_callscript(company_id: UUID, auth: CurrentAuth, db: Db) -> Callsc
     company.callscript_generated_at = script.generated_at
     await db.flush()
     return script
+
+
+# ---- Mailgun ----
+
+
+def _mailgun_creds(row: Integration):
+    from salespilot.integrations.mailgun import MailgunCredentials
+    cfg = row.config_json or {}
+    return MailgunCredentials(
+        base_url=cfg.get("base_url") or "api.eu.mailgun.net",
+        domain=cfg.get("domain", ""),
+        api_key=cfg.get("api_key", ""),
+        webhook_signing_key=cfg.get("webhook_signing_key"),
+    )
+
+
+@router.post(f"/{MAILGUN_KIND}/test", response_model=TestConnectionResult)
+async def test_mailgun(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    from salespilot.integrations.mailgun import MailgunClient, MailgunError
+    row = await _get_integration(db, MAILGUN_KIND)
+    if row is None:
+        raise HTTPException(status_code=400, detail="Mailgun not configured yet")
+    cfg = row.config_json or {}
+    if not cfg.get("domain") or not cfg.get("api_key"):
+        return TestConnectionResult(ok=False, detail="domain or api_key missing")
+    try:
+        async with MailgunClient(_mailgun_creds(row)) as client:
+            info = await client.test_connection()
+        state = info.get("domain", {}).get("state") if isinstance(info, dict) else "?"
+        return TestConnectionResult(
+            ok=True,
+            detail=f"Domain found. State: {state}.",
+            token_present=True,
+        )
+    except MailgunError as e:
+        return TestConnectionResult(ok=False, detail=str(e))
+
+
+# ---- LinkedIn OAuth bootstrap ----
+# Note: the OAuth callback exchange itself lives in api/oauth_callbacks.py
+# so it can be hit without an Authorization header. Here we just provide
+# the URL builder so the frontend can redirect into LinkedIn.
+
+
+@router.get(f"/{LINKEDIN_KIND}/oauth-url")
+async def linkedin_oauth_url(
+    auth: CurrentAuth, db: Db
+) -> dict[str, str]:
+    """Returns the LinkedIn OAuth authorize URL for the configured client_id."""
+    from urllib.parse import urlencode
+    from salespilot.config import get_settings
+    row = await _get_integration(db, LINKEDIN_KIND)
+    cfg = (row.config_json if row else {}) or {}
+    client_id = cfg.get("client_id")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="set client_id first")
+    # Scopes: w_member_social = post on user's behalf; r_liteprofile = read
+    # name/photo/urn. Post scheduling needs w_member_social. For company-page
+    # posting, w_organization_social is required (admin-managed only).
+    scopes = "openid profile email w_member_social"
+    settings = get_settings()
+    public_base = getattr(settings, "public_base_url", "https://sales.hostingportal.org")
+    redirect_uri = f"{public_base}/api/v1/oauth/linkedin/callback"
+    state = str(auth.org_id)  # naive — org_id IS the state for now
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "scope": scopes,
+    }
+    return {"authorize_url": f"https://www.linkedin.com/oauth/v2/authorization?{urlencode(params)}"}
