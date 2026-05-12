@@ -7,6 +7,9 @@ import "./index.css";
 import { AuthProvider, RequireAuth } from "./lib/auth";
 import { Login } from "./pages/Login";
 import { Contacts } from "./pages/Contacts";
+import { Companies } from "./pages/Companies";
+import { Deals } from "./pages/Deals";
+import { Activities } from "./pages/Activities";
 import { AppLayout } from "./components/AppLayout";
 
 const queryClient = new QueryClient({
@@ -33,6 +36,9 @@ createRoot(root).render(
               }
             >
               <Route path="/contacts" element={<Contacts />} />
+              <Route path="/companies" element={<Companies />} />
+              <Route path="/deals" element={<Deals />} />
+              <Route path="/activities" element={<Activities />} />
               <Route path="/" element={<Navigate to="/contacts" replace />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
