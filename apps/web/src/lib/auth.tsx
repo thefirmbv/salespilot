@@ -13,7 +13,7 @@ import { api, getAccessToken, setAccessToken } from "./api";
 
 type Me = {
   user: { id: string; email: string; full_name: string | null; is_active: boolean };
-  current_org: { id: string; name: string; slug: string } | null;
+  current_org: { id: string; name: string; slug: string; logo_url: string | null; brand_color: string | null } | null;
   memberships: Array<{ org: { id: string; name: string; slug: string }; role: string }>;
 };
 

@@ -1,390 +1,313 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { useDebounce } from "@/lib/useDebounce";
-import { FormDialog, type FieldSpec, type FormValues } from "@/components/FormDialog";
-import { StatusBadge, fmtDate, fmtMoney } from "@/lib/format";
-import { loadCompanyOptions, loadContactOptions } from "@/lib/options";
-import { DealsKanban } from "@/components/DealsKanban";
 
 type Deal = {
   id: string;
   name: string;
-  amount: number | null;
+  amount: string | null;
   currency: string;
   status: "open" | "won" | "lost";
   pipeline_id: string;
   stage_id: string;
+  stage_name: string | null;
   company_id: string | null;
+  company_name: string | null;
   primary_contact_id: string | null;
+  primary_contact_name: string | null;
+  primary_contact_email: string | null;
+  primary_contact_phone: string | null;
   expected_close_date: string | null;
   closed_at: string | null;
+  quotation_count: number;
+  quotation_total: string | null;
+  last_quotation_status: string | null;
   created_at: string;
+  updated_at: string;
 };
-type Pipeline = { id: string; name: string; is_default: boolean };
-type Stage = { id: string; name: string; position: number };
-type Page<T> = { items: T[]; total: number; limit: number; offset: number };
 
-type View = "list" | "kanban";
+type Summary = {
+  open_count: number;
+  open_amount: string;
+  won_count_30d: number;
+  won_amount_30d: string;
+  lost_count_30d: number;
+  lost_amount_30d: string;
+  win_rate_90d: number;
+  stale_open_count: number;
+  currency: string;
+};
+
+const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  open: { bg: "#E6F1FB", text: "#0C447C", label: "Open" },
+  won:  { bg: "#E1F5EE", text: "#085041", label: "Gewonnen" },
+  lost: { bg: "#FCEBEB", text: "#791F1F", label: "Verloren" },
+};
+
+const QUOTE_STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  draft:    { bg: "#F1F5F9", text: "#475569", label: "concept" },
+  sent:     { bg: "#E6F1FB", text: "#0C447C", label: "verzonden" },
+  accepted: { bg: "#E1F5EE", text: "#085041", label: "geaccepteerd" },
+  rejected: { bg: "#FCEBEB", text: "#791F1F", label: "afgewezen" },
+  expired:  { bg: "#FAEEDA", text: "#633806", label: "verlopen" },
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_STYLES[status] ?? STATUS_STYLES.open;
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium"
+      style={{ backgroundColor: s.bg, color: s.text }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+function QuoteStatusBadge({ status }: { status: string }) {
+  const s = QUOTE_STATUS_STYLES[status] ?? QUOTE_STATUS_STYLES.draft;
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+      style={{ backgroundColor: s.bg, color: s.text }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+function fmtEUR(v: string | null): string {
+  if (v === null || v === undefined || v === "") return "\u2014";
+  const n = Number(v);
+  if (!Number.isFinite(n) || n === 0) return "\u2014";
+  return new Intl.NumberFormat("nl-NL", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+  }).format(n);
+}
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return "\u2014";
+  return new Date(iso).toLocaleDateString("nl-NL", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function PhoneLink({ phone }: { phone: string | null }) {
+  if (!phone) return <span className="text-slate-400">\u2014</span>;
+  return (
+    <a
+      href={`tel:${phone}`}
+      onClick={(e) => e.stopPropagation()}
+      className="font-mono text-[11px] text-slate-700 hover:text-brand-600 hover:underline"
+    >
+      {phone}
+    </a>
+  );
+}
+
+const BUCKETS = [
+  { id: "",     label: "Alle"      },
+  { id: "open", label: "Open"      },
+  { id: "won",  label: "Gewonnen"  },
+  { id: "lost", label: "Verloren"  },
+];
 
 export function Deals() {
-  const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const view: View = params.get("view") === "kanban" ? "kanban" : "list";
-  const [dialog, setDialog] = useState<
-    | { mode: "create" }
-    | { mode: "edit"; row: Deal }
-    | null
-  >(null);
+  const bucket = params.get("status") ?? "open";
+  const [searchTerm, setSearchTerm] = useState("");
 
-  // Search + status filter — only relevant in list view, but they live
-  // in the URL so they survive a view toggle round trip.
-  const [q, setQ] = useState(params.get("q") ?? "");
-  const debouncedQ = useDebounce(q, 300);
-  if (debouncedQ !== (params.get("q") ?? "")) {
-    const next = new URLSearchParams(params);
-    if (debouncedQ) next.set("q", debouncedQ);
-    else next.delete("q");
-    setParams(next, { replace: true });
-  }
-  const statusFilter = params.get("status") ?? "";
-  const sort = params.get("sort") ?? "";
-  const offset = Math.max(0, parseInt(params.get("offset") ?? "0", 10) || 0);
-  const PAGE_SIZE = 50;
+  const listQ = useQuery<Deal[]>({
+    queryKey: ["/deals-enriched", bucket],
+    queryFn: () =>
+      api<Deal[]>(
+        bucket ? `/deals-enriched?status=${bucket}&limit=500` : "/deals-enriched?limit=500",
+      ),
+  });
 
-  function cycleSort(key: string) {
-    let nextValue: string | null;
-    if (sort === `-${key}`) nextValue = key;
-    else if (sort === key) nextValue = null;
-    else nextValue = `-${key}`;
-    const next = new URLSearchParams(params);
-    if (nextValue) next.set("sort", nextValue);
-    else next.delete("sort");
-    next.delete("offset");
-    setParams(next, { replace: true });
-  }
+  const summaryQ = useQuery<Summary>({
+    queryKey: ["/deals-enriched/summary"],
+    queryFn: () => api<Summary>("/deals-enriched/summary"),
+  });
 
-  function setOffset(o: number) {
-    const next = new URLSearchParams(params);
-    if (o > 0) next.set("offset", String(o));
-    else next.delete("offset");
-    setParams(next, { replace: true });
-  }
-
-  function sortableTh(label: string, key: string) {
-    const arrow = sort === key ? "↑" : sort === `-${key}` ? "↓" : "";
+  const summary = summaryQ.data;
+  const items = (listQ.data ?? []).filter((d) => {
+    if (!searchTerm) return true;
+    const t = searchTerm.toLowerCase();
     return (
-      <th
-        className="px-4 py-2 cursor-pointer select-none hover:bg-slate-100"
-        onClick={() => cycleSort(key)}
-      >
-        {label}{arrow && <span className="ml-1">{arrow}</span>}
-      </th>
+      d.name.toLowerCase().includes(t) ||
+      (d.company_name ?? "").toLowerCase().includes(t) ||
+      (d.primary_contact_name ?? "").toLowerCase().includes(t)
     );
-  }
-
-  // Build list-view query string.
-  const listParams = new URLSearchParams();
-  listParams.set("limit", String(50));
-  if (offset) listParams.set("offset", String(offset));
-  if (debouncedQ) listParams.set("q", debouncedQ);
-  if (statusFilter) listParams.set("status", statusFilter);
-  if (sort) listParams.set("sort", sort);
-  const listParamsString = listParams.toString();
-
-  const dealsQ = useQuery<Page<Deal>>({
-    queryKey: ["/deals", listParamsString],
-    queryFn: () => api<Page<Deal>>(`/deals?${listParamsString}`),
-    enabled: view === "list",
   });
 
-  const pipelinesQ = useQuery<Pipeline[]>({
-    queryKey: ["pipelines"],
-    queryFn: () => api<Pipeline[]>("/pipelines"),
-  });
-  const defaultPipeline =
-    pipelinesQ.data?.find((p) => p.is_default) ?? pipelinesQ.data?.[0];
-  const activePipelineId =
-    dialog?.mode === "edit" ? dialog.row.pipeline_id : defaultPipeline?.id;
-
-  const stagesQ = useQuery<Stage[]>({
-    queryKey: ["stages", activePipelineId],
-    queryFn: () => api<Stage[]>(`/pipelines/${activePipelineId}/stages`),
-    enabled: !!activePipelineId,
-  });
-
-  const createMut = useMutation({
-    mutationFn: (body: unknown) =>
-      api<Deal>("/deals", { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/deals"] }),
-  });
-  const updateMut = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: unknown }) =>
-      api<Deal>(`/deals/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/deals"] }),
-  });
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => api<void>(`/deals/${id}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/deals"] }),
-  });
-
-  const fields: FieldSpec[] = [
-    { name: "name", label: "Deal name", type: "text", required: true },
-    { name: "amount", label: "Amount", type: "number", min: 0 },
-    {
-      name: "currency",
-      label: "Currency",
-      type: "select",
-      required: true,
-      options: [
-        { value: "EUR", label: "EUR" },
-        { value: "USD", label: "USD" },
-        { value: "GBP", label: "GBP" },
-      ],
-    },
-    {
-      name: "stage_id",
-      label: "Stage",
-      type: "select",
-      required: true,
-      options: (stagesQ.data ?? []).map((s) => ({ value: s.id, label: s.name })),
-    },
-    {
-      name: "company_id",
-      label: "Company",
-      type: "select-async",
-      loadOptions: loadCompanyOptions,
-    },
-    {
-      name: "primary_contact_id",
-      label: "Primary contact",
-      type: "select-async",
-      loadOptions: loadContactOptions,
-    },
-    { name: "expected_close_date", label: "Expected close", type: "date" },
-  ];
-
-  async function handleSubmit(values: FormValues): Promise<void> {
-    const body: Record<string, unknown> = { ...values };
-    if (typeof body.expected_close_date === "string" && body.expected_close_date) {
-      body.expected_close_date = `${body.expected_close_date}T00:00:00Z`;
-    }
-    if (dialog?.mode === "edit") {
-      await updateMut.mutateAsync({ id: dialog.row.id, body });
-    } else {
-      body.pipeline_id = defaultPipeline?.id;
-      await createMut.mutateAsync(body);
-    }
-    setDialog(null);
-  }
-
-  function setView(v: View) {
-    const next = new URLSearchParams(params);
-    if (v === "list") next.delete("view");
-    else next.set("view", v);
-    setParams(next, { replace: true });
-  }
-
-  function setStatus(s: string) {
-    const next = new URLSearchParams(params);
-    if (s) next.set("status", s);
-    else next.delete("status");
-    setParams(next, { replace: true });
-  }
-
-  const inputCls =
-    "rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900";
-  const hasFilter = debouncedQ || statusFilter;
+  const all = listQ.data ?? [];
+  const counts = {
+    "":   all.length,
+    open: all.filter((d) => d.status === "open").length,
+    won:  all.filter((d) => d.status === "won").length,
+    lost: all.filter((d) => d.status === "lost").length,
+  };
 
   return (
     <div>
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Deals</h1>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-md ring-1 ring-slate-300 overflow-hidden text-sm">
-            <button
-              onClick={() => setView("list")}
-              className={`px-3 py-1.5 ${
-                view === "list" ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-            >
-              List
-            </button>
-            <button
-              onClick={() => setView("kanban")}
-              className={`px-3 py-1.5 border-l border-slate-300 ${
-                view === "kanban" ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-            >
-              Kanban
-            </button>
+      <div className="overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <div>
+            <h1 className="text-lg font-medium">Deals</h1>
+            <div className="mt-0.5 text-xs text-slate-500">
+              {summary?.open_count} open \u00b7 {fmtEUR(summary?.open_amount ?? null)} in pipeline
+            </div>
           </div>
-          <button
-            onClick={() => setDialog({ mode: "create" })}
-            disabled={!defaultPipeline}
-            className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
-            + New deal
-          </button>
         </div>
-      </div>
 
-      {view === "list" && (
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by deal name"
-            className={`${inputCls} flex-1 min-w-[200px] max-w-md`}
-          />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatus(e.target.value)}
-            className={inputCls}
-          >
-            <option value="">Status: any</option>
-            <option value="open">Status: open</option>
-            <option value="won">Status: won</option>
-            <option value="lost">Status: lost</option>
-          </select>
-          {hasFilter && (
-            <button
-              onClick={() => {
-                setQ("");
-                setStatus("");
-              }}
-              className="text-xs text-slate-500 hover:text-slate-900 underline"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="mt-6">
-        {view === "kanban" ? (
-          <DealsKanban />
-        ) : (
-          <div className="overflow-hidden rounded-lg ring-1 ring-slate-200 bg-white">
-            {dealsQ.isLoading && <div className="p-4 text-slate-500">Loading…</div>}
-            {dealsQ.error && (
-              <div className="p-4 text-red-600">
-                {dealsQ.error instanceof Error ? dealsQ.error.message : "failed"}
-              </div>
-            )}
-            {dealsQ.data?.items.length === 0 && (
-              <div className="p-8 text-center text-slate-500">
-                {hasFilter ? "No deals match your filters." : "No deals yet. Click + New deal to start."}
-              </div>
-            )}
-            {dealsQ.data && dealsQ.data.items.length > 0 && (
-              <>
-                <table className="w-full text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-600">
-                    <tr>
-                      {sortableTh("Name", "name")}
-                      {sortableTh("Amount", "amount")}
-                      {sortableTh("Status", "status")}
-                      {sortableTh("Expected close", "expected_close_date")}
-                      <th className="px-4 py-2 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dealsQ.data.items.map((d) => (
-                      <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                        <td className="px-4 py-2 font-medium">
-                          <Link to={`/deals/${d.id}`} className="hover:underline">
-                            {d.name}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-2 tabular-nums text-slate-700">
-                          {fmtMoney(d.amount, d.currency)}
-                        </td>
-                        <td className="px-4 py-2">
-                          <StatusBadge status={d.status} />
-                        </td>
-                        <td className="px-4 py-2 text-slate-700">
-                          {fmtDate(d.expected_close_date)}
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          <button
-                            onClick={() => setDialog({ mode: "edit", row: d })}
-                            className="mr-2 text-xs text-slate-600 hover:text-slate-900 underline"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (confirm(`Delete deal "${d.name}"?`)) {
-                                deleteMut.mutate(d.id);
-                              }
-                            }}
-                            className="text-xs text-red-600 hover:text-red-800 underline"
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
-                  <span>
-                    Showing {offset + 1}–{offset + dealsQ.data.items.length} of {dealsQ.data.total}
-                  </span>
-                  {dealsQ.data.total > PAGE_SIZE && (
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-                        disabled={offset === 0}
-                        className="rounded-md bg-white px-2 py-1 ring-1 ring-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        ← Prev
-                      </button>
-                      <span className="px-2">
-                        Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(dealsQ.data.total / PAGE_SIZE))}
-                      </span>
-                      <button
-                        onClick={() => setOffset(offset + PAGE_SIZE)}
-                        disabled={offset + PAGE_SIZE >= dealsQ.data.total}
-                        className="rounded-md bg-white px-2 py-1 ring-1 ring-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        Next →
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+        {summary && (
+          <div className="grid grid-cols-2 gap-3 border-b border-slate-200 bg-slate-50 p-4 md:grid-cols-4">
+            <KPI label="Open pipeline" value={fmtEUR(summary.open_amount)} sub={`${summary.open_count} deals`} />
+            <KPI label="Gewonnen (30d)" value={fmtEUR(summary.won_amount_30d)} sub={`${summary.won_count_30d} deals`} tone="emerald" />
+            <KPI label="Verloren (30d)" value={fmtEUR(summary.lost_amount_30d)} sub={`${summary.lost_count_30d} deals`} tone="red" />
+            <KPI label={`Win rate 90d`} value={`${summary.win_rate_90d}%`} sub={summary.stale_open_count > 0 ? `${summary.stale_open_count} stilliggend` : "geen oude"} tone={summary.stale_open_count > 0 ? "amber" : "default"} />
           </div>
         )}
-      </div>
 
-      {dialog && (
-        <FormDialog
-          open={true}
-          onClose={() => setDialog(null)}
-          title={dialog.mode === "edit" ? `Edit ${dialog.row.name}` : "New deal"}
-          fields={fields}
-          initialValues={
-            dialog.mode === "edit"
-              ? {
-                  name: dialog.row.name,
-                  amount: dialog.row.amount,
-                  currency: dialog.row.currency,
-                  stage_id: dialog.row.stage_id,
-                  company_id: dialog.row.company_id,
-                  primary_contact_id: dialog.row.primary_contact_id,
-                  expected_close_date: dialog.row.expected_close_date?.slice(0, 10),
-                }
-              : { currency: "EUR" }
-          }
-          onSubmit={handleSubmit}
-          submitLabel={dialog.mode === "edit" ? "Save changes" : "Create"}
-        />
-      )}
+        <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 px-4 py-2">
+          {BUCKETS.map((b) => (
+            <button
+              key={b.id}
+              onClick={() => {
+                const next = new URLSearchParams(params);
+                if (b.id) next.set("status", b.id);
+                else next.delete("status");
+                setParams(next, { replace: true });
+              }}
+              className={`rounded-md px-2.5 py-1 text-xs ${
+                bucket === b.id
+                  ? "bg-brand-500 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              {b.label}{" "}
+              <span className="opacity-70 tabular-nums">
+                ({counts[b.id as keyof typeof counts] ?? 0})
+              </span>
+            </button>
+          ))}
+          <input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Zoek op deal, bedrijf, contact\u2026"
+            className="ml-auto min-w-[200px] rounded-md border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_90px_100px_90px] gap-3 border-b border-slate-200 px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500">
+          <div>Deal</div>
+          <div>Bedrijf</div>
+          <div>Contact</div>
+          <div>Status</div>
+          <div className="text-right">Bedrag</div>
+          <div className="text-right">Bijgewerkt</div>
+        </div>
+
+        {listQ.isLoading && (
+          <div className="px-4 py-6 text-sm text-slate-500">Bezig met laden\u2026</div>
+        )}
+
+        {!listQ.isLoading && items.length === 0 && (
+          <div className="px-4 py-10 text-center text-sm text-slate-500">
+            Geen deals in deze categorie.
+          </div>
+        )}
+
+        {items.map((d) => (
+          <Link
+            key={d.id}
+            to={`/deals/${d.id}`}
+            className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_90px_100px_90px] items-center gap-3 border-b border-slate-100 px-4 py-2.5 hover:bg-slate-50"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">{d.name}</div>
+              <div className="flex items-center gap-1 text-[11px] text-slate-500">
+                {d.stage_name && <span>{d.stage_name}</span>}
+                {d.quotation_count > 0 && (
+                  <>
+                    <span>\u00b7</span>
+                    <span>{d.quotation_count}\u00d7 offerte</span>
+                    {d.last_quotation_status && (
+                      <QuoteStatusBadge status={d.last_quotation_status} />
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="min-w-0">
+              {d.company_name ? (
+                <span className="truncate text-sm text-slate-700">
+                  {d.company_name}
+                </span>
+              ) : (
+                <span className="text-sm text-slate-400">\u2014</span>
+              )}
+            </div>
+            <div className="min-w-0">
+              {d.primary_contact_name ? (
+                <>
+                  <div className="truncate text-sm text-slate-700">
+                    {d.primary_contact_name}
+                  </div>
+                  <PhoneLink phone={d.primary_contact_phone} />
+                </>
+              ) : (
+                <span className="text-sm text-slate-400">geen contact</span>
+              )}
+            </div>
+            <div>
+              <StatusBadge status={d.status} />
+            </div>
+            <div className="text-right text-sm tabular-nums">
+              {fmtEUR(d.amount)}
+            </div>
+            <div className="text-right text-[11px] text-slate-500">
+              {fmtDate(d.updated_at)}
+            </div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function KPI({
+  label,
+  value,
+  sub,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "default" | "amber" | "red" | "emerald";
+}) {
+  const toneCls = {
+    default: "text-slate-900",
+    amber: "text-amber-700",
+    red: "text-red-700",
+    emerald: "text-emerald-700",
+  }[tone];
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-3">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+        {label}
+      </div>
+      <div className={`mt-1 text-xl font-medium tabular-nums ${toneCls}`}>
+        {value}
+      </div>
+      {sub && <div className="text-[11px] text-slate-500">{sub}</div>}
     </div>
   );
 }

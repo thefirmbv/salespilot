@@ -52,6 +52,13 @@ class OrgPublic(BaseModel):
     id: UUID
     name: str
     slug: str
+    logo_url: str | None = None
+    brand_color: str | None = None
+
+
+class OrgUpdate(BaseModel):
+    name: str | None = None
+    brand_color: str | None = None
 
 
 class MembershipPublic(BaseModel):

@@ -1,5 +1,7 @@
 /** Minimal fetch wrapper that adds the bearer token and handles JSON. */
 
+export const API_BASE = "/api/v1";
+
 let accessToken: string | null = localStorage.getItem("access_token");
 
 export function setAccessToken(token: string | null): void {
@@ -28,7 +30,7 @@ export async function api<T>(
   }
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
 
-  const res = await fetch(`/api/v1${path}`, { ...init, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
 
   if (res.status === 204) return undefined as T;
 

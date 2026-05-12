@@ -19,7 +19,14 @@ export function Settings() {
           >
             Integrations
           </NavLink>
-          {/* Future tabs: Users, Pipelines, Custom fields, Branding, etc. */}
+          <NavLink
+            to="branding"
+            className={({ isActive }) =>
+              `${tab} ${isActive ? tabActive : tabIdle}`
+            }
+          >
+            Branding
+          </NavLink>
         </div>
       </div>
       <div className="mt-6">

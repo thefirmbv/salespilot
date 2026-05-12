@@ -22,6 +22,7 @@ import { Activities } from "./pages/Activities";
 import { Settings, SettingsIndex } from "./pages/Settings";
 import { IntegrationsSettings } from "./pages/IntegrationsSettings";
 import { IntegrationConfigure } from "./pages/IntegrationConfigure";
+import { BrandingSettings } from "./pages/BrandingSettings";
 import { AppLayout } from "./components/AppLayout";
 
 const queryClient = new QueryClient({
@@ -64,6 +65,7 @@ createRoot(root).render(
                 <Route index element={<SettingsIndex />} />
                 <Route path="integrations" element={<IntegrationsSettings />} />
                 <Route path="integrations/:kind" element={<IntegrationConfigure />} />
+                <Route path="branding" element={<BrandingSettings />} />
               </Route>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Route>

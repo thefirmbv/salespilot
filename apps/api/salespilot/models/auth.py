@@ -27,6 +27,8 @@ class Organization(UUIDPrimaryKey, Timestamps, Base):
 
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     slug: Mapped[str] = mapped_column(String(60), unique=True, nullable=False)
+    logo_url: Mapped[str | None] = mapped_column(String(500))
+    brand_color: Mapped[str | None] = mapped_column(String(20))
 
     memberships: Mapped[list["OrgMembership"]] = relationship(
         back_populates="organization", cascade="all, delete-orphan"

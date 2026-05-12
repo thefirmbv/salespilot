@@ -198,10 +198,18 @@ export function AppLayout() {
     <div className="flex min-h-full bg-slate-50">
       <aside className="w-60 border-r border-slate-200 bg-white flex flex-col">
         <div className="px-4 py-5">
-          <div className="text-base font-semibold text-brand-600 leading-tight">
-            SalesPilot
-          </div>
-          <div className="text-xs text-slate-500 truncate">
+          {me?.current_org?.logo_url ? (
+            <img
+              src={me.current_org.logo_url}
+              alt={me.current_org.name}
+              className="h-9 max-w-[180px] object-contain"
+            />
+          ) : (
+            <div className="text-base font-semibold text-brand-600 leading-tight">
+              SalesPilot
+            </div>
+          )}
+          <div className="mt-1 text-xs text-slate-500 truncate">
             {me?.current_org?.name ?? "—"}
           </div>
         </div>
