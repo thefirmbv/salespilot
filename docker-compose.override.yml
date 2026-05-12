@@ -17,7 +17,7 @@ services:
     volumes:
       - ./apps/api:/app
     ports:
-      - "8000:8000"
+      - "${API_DEV_PORT:-8000}:8000"
     environment:
       ENV: development
       POSTGRES_HOST: postgres

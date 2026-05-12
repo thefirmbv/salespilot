@@ -110,7 +110,7 @@ class Deal(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     amount: Mapped[float | None] = mapped_column(Numeric(14, 2))
     currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
     status: Mapped[DealStatus] = mapped_column(
-        Enum(DealStatus, name="deal_status"), default=DealStatus.OPEN, nullable=False
+        Enum(DealStatus, name="deal_status", values_callable=lambda e: [x.value for x in e]), default=DealStatus.OPEN, nullable=False
     )
     pipeline_id: Mapped[UUID] = mapped_column(
         ForeignKey("pipelines.id", ondelete="RESTRICT"), nullable=False, index=True
@@ -159,10 +159,10 @@ class Activity(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     __tablename__ = "activities"
 
     type: Mapped[ActivityType] = mapped_column(
-        Enum(ActivityType, name="activity_type"), nullable=False, index=True
+        Enum(ActivityType, name="activity_type", values_callable=lambda e: [x.value for x in e]), nullable=False, index=True
     )
     target_type: Mapped[ActivityTarget] = mapped_column(
-        Enum(ActivityTarget, name="activity_target"), nullable=False
+        Enum(ActivityTarget, name="activity_target", values_callable=lambda e: [x.value for x in e]), nullable=False
     )
     target_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
 
@@ -199,7 +199,7 @@ class CustomFieldDefinition(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     key: Mapped[str] = mapped_column(String(60), nullable=False)
     label: Mapped[str] = mapped_column(String(120), nullable=False)
     type: Mapped[CustomFieldType] = mapped_column(
-        Enum(CustomFieldType, name="custom_field_type"), nullable=False
+        Enum(CustomFieldType, name="custom_field_type", values_callable=lambda e: [x.value for x in e]), nullable=False
     )
     # For select/multiselect: JSON list of strings.
     options: Mapped[list[str] | None] = mapped_column(JSON)

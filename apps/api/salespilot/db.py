@@ -78,8 +78,11 @@ async def tenant_session(org_id: UUID) -> AsyncIterator[AsyncSession]:
     """
     sm = get_sessionmaker()
     async with sm() as session:
+        # SET LOCAL does not accept bind params. We validate org_id as a UUID
+        # before constructing the SQL, so this is safe from injection.
+        assert isinstance(org_id, UUID), "org_id must be a UUID"
         await session.execute(
-            text("SET LOCAL app.current_org_id = :org_id").bindparams(org_id=str(org_id))
+            text(f"SET LOCAL app.current_org_id = '{org_id}'")
         )
         try:
             yield session

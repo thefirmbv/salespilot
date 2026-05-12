@@ -7,7 +7,7 @@ construct a Settings instance with explicit values and inject it.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AnyHttpUrl, Field, SecretStr, field_validator
+from pydantic import AnyHttpUrl, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -74,15 +74,13 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
 
     # --- CORS ---
-    cors_origins: list[str] = Field(default_factory=list)
+    # Stored as CSV string so pydantic-settings doesn't try to JSON-parse.
+    # Use the `cors_origins` property to get a list[str].
+    cors_origins_raw: str = Field(default="", alias="CORS_ORIGINS")
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def split_cors_origins(cls, v: object) -> object:
-        # Accept comma-separated string from env, list from code.
-        if isinstance(v, str):
-            return [o.strip() for o in v.split(",") if o.strip()]
-        return v
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins_raw.split(",") if o.strip()]
 
     @property
     def is_production(self) -> bool:

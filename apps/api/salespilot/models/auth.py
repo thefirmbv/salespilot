@@ -61,7 +61,7 @@ class OrgMembership(UUIDPrimaryKey, Timestamps, Base):
         ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     role: Mapped[OrgRole] = mapped_column(
-        Enum(OrgRole, name="org_role"), default=OrgRole.MEMBER, nullable=False
+        Enum(OrgRole, name="org_role", values_callable=lambda e: [x.value for x in e]), default=OrgRole.MEMBER, nullable=False
     )
 
     user: Mapped[User] = relationship(back_populates="memberships")
