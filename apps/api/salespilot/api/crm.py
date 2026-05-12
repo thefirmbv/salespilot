@@ -56,6 +56,7 @@ companies_router = make_crud_router(
     create_schema=CompanyCreate,
     update_schema=CompanyUpdate,
     public_schema=CompanyPublic,
+    searchable_fields=("name", "domain", "industry", "description"),
 )
 
 contacts_router = make_crud_router(
@@ -66,6 +67,7 @@ contacts_router = make_crud_router(
     update_schema=ContactUpdate,
     public_schema=ContactPublic,
     filterable_fields=("company_id", "owner_id"),
+    searchable_fields=("first_name", "last_name", "email", "phone", "job_title"),
 )
 
 deals_router = make_crud_router(
@@ -77,6 +79,7 @@ deals_router = make_crud_router(
     public_schema=DealPublic,
     filterable_fields=("company_id", "primary_contact_id", "owner_id", "status", "stage_id"),
     on_before_save=_deal_before_save,
+    searchable_fields=("name",),
 )
 
 activities_router = make_crud_router(
@@ -87,4 +90,5 @@ activities_router = make_crud_router(
     update_schema=ActivityUpdate,
     public_schema=ActivityPublic,
     filterable_fields=("target_type", "target_id", "type", "author_id"),
+    searchable_fields=("subject", "body"),
 )

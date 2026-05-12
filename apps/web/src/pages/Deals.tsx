@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useDebounce } from "@/lib/useDebounce";
 import { FormDialog, type FieldSpec, type FormValues } from "@/components/FormDialog";
 import { StatusBadge, fmtDate, fmtMoney } from "@/lib/format";
 import { loadCompanyOptions, loadContactOptions } from "@/lib/options";
@@ -37,9 +38,28 @@ export function Deals() {
     | null
   >(null);
 
+  // Search + status filter — only relevant in list view, but they live
+  // in the URL so they survive a view toggle round trip.
+  const [q, setQ] = useState(params.get("q") ?? "");
+  const debouncedQ = useDebounce(q, 300);
+  if (debouncedQ !== (params.get("q") ?? "")) {
+    const next = new URLSearchParams(params);
+    if (debouncedQ) next.set("q", debouncedQ);
+    else next.delete("q");
+    setParams(next, { replace: true });
+  }
+  const statusFilter = params.get("status") ?? "";
+
+  // Build list-view query string.
+  const listParams = new URLSearchParams();
+  listParams.set("limit", "100");
+  if (debouncedQ) listParams.set("q", debouncedQ);
+  if (statusFilter) listParams.set("status", statusFilter);
+  const listParamsString = listParams.toString();
+
   const dealsQ = useQuery<Page<Deal>>({
-    queryKey: ["/deals"],
-    queryFn: () => api<Page<Deal>>("/deals?limit=100"),
+    queryKey: ["/deals", listParamsString],
+    queryFn: () => api<Page<Deal>>(`/deals?${listParamsString}`),
     enabled: view === "list",
   });
 
@@ -130,6 +150,17 @@ export function Deals() {
     setParams(next, { replace: true });
   }
 
+  function setStatus(s: string) {
+    const next = new URLSearchParams(params);
+    if (s) next.set("status", s);
+    else next.delete("status");
+    setParams(next, { replace: true });
+  }
+
+  const inputCls =
+    "rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900";
+  const hasFilter = debouncedQ || statusFilter;
+
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -163,6 +194,39 @@ export function Deals() {
         </div>
       </div>
 
+      {view === "list" && (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by deal name"
+            className={`${inputCls} flex-1 min-w-[200px] max-w-md`}
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatus(e.target.value)}
+            className={inputCls}
+          >
+            <option value="">Status: any</option>
+            <option value="open">Status: open</option>
+            <option value="won">Status: won</option>
+            <option value="lost">Status: lost</option>
+          </select>
+          {hasFilter && (
+            <button
+              onClick={() => {
+                setQ("");
+                setStatus("");
+              }}
+              className="text-xs text-slate-500 hover:text-slate-900 underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="mt-6">
         {view === "kanban" ? (
           <DealsKanban />
@@ -176,59 +240,64 @@ export function Deals() {
             )}
             {dealsQ.data?.items.length === 0 && (
               <div className="p-8 text-center text-slate-500">
-                No deals yet. Click + New deal to start.
+                {hasFilter ? "No deals match your filters." : "No deals yet. Click + New deal to start."}
               </div>
             )}
             {dealsQ.data && dealsQ.data.items.length > 0 && (
-              <table className="w-full text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-600">
-                  <tr>
-                    <th className="px-4 py-2">Name</th>
-                    <th className="px-4 py-2">Amount</th>
-                    <th className="px-4 py-2">Status</th>
-                    <th className="px-4 py-2">Expected close</th>
-                    <th className="px-4 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dealsQ.data.items.map((d) => (
-                    <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                      <td className="px-4 py-2 font-medium">
-                        <Link to={`/deals/${d.id}`} className="hover:underline">
-                          {d.name}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-2 tabular-nums text-slate-700">
-                        {fmtMoney(d.amount, d.currency)}
-                      </td>
-                      <td className="px-4 py-2">
-                        <StatusBadge status={d.status} />
-                      </td>
-                      <td className="px-4 py-2 text-slate-700">
-                        {fmtDate(d.expected_close_date)}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <button
-                          onClick={() => setDialog({ mode: "edit", row: d })}
-                          className="mr-2 text-xs text-slate-600 hover:text-slate-900 underline"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (confirm(`Delete deal "${d.name}"?`)) {
-                              deleteMut.mutate(d.id);
-                            }
-                          }}
-                          className="text-xs text-red-600 hover:text-red-800 underline"
-                        >
-                          Delete
-                        </button>
-                      </td>
+              <>
+                <table className="w-full text-sm">
+                  <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-600">
+                    <tr>
+                      <th className="px-4 py-2">Name</th>
+                      <th className="px-4 py-2">Amount</th>
+                      <th className="px-4 py-2">Status</th>
+                      <th className="px-4 py-2">Expected close</th>
+                      <th className="px-4 py-2 text-right">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {dealsQ.data.items.map((d) => (
+                      <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                        <td className="px-4 py-2 font-medium">
+                          <Link to={`/deals/${d.id}`} className="hover:underline">
+                            {d.name}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2 tabular-nums text-slate-700">
+                          {fmtMoney(d.amount, d.currency)}
+                        </td>
+                        <td className="px-4 py-2">
+                          <StatusBadge status={d.status} />
+                        </td>
+                        <td className="px-4 py-2 text-slate-700">
+                          {fmtDate(d.expected_close_date)}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <button
+                            onClick={() => setDialog({ mode: "edit", row: d })}
+                            className="mr-2 text-xs text-slate-600 hover:text-slate-900 underline"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm(`Delete deal "${d.name}"?`)) {
+                                deleteMut.mutate(d.id);
+                              }
+                            }}
+                            className="text-xs text-red-600 hover:text-red-800 underline"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
+                  Showing {dealsQ.data.items.length} of {dealsQ.data.total}
+                </div>
+              </>
             )}
           </div>
         )}

@@ -43,6 +43,7 @@ def make_crud_router(
     update_schema: type[UpdateT],
     public_schema: type[PublicT],
     filterable_fields: tuple[str, ...] = (),
+    searchable_fields: tuple[str, ...] = (),
     on_before_save: "Callable[[Any, AsyncSession], Awaitable[None]] | None" = None,
 ) -> APIRouter:
     """`on_before_save` is invoked after fields have been applied but before
@@ -69,6 +70,17 @@ def make_crud_router(
             col = getattr(model, key)
             stmt = stmt.where(col == raw)
             count_stmt = count_stmt.where(col == raw)
+
+        # Free-text search across searchable_fields.
+        q = request.query_params.get("q")
+        if q and searchable_fields:
+            from sqlalchemy import or_
+            pattern = f"%{q}%"
+            search_clauses = [
+                getattr(model, f).ilike(pattern) for f in searchable_fields
+            ]
+            stmt = stmt.where(or_(*search_clauses))
+            count_stmt = count_stmt.where(or_(*search_clauses))
 
         total = (await db.execute(count_stmt)).scalar_one()
         rows = (

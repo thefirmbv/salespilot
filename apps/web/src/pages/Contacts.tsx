@@ -53,6 +53,8 @@ export function Contacts() {
       emptyMessage="No contacts yet. Click + New contact to start."
       formFields={fields}
       rowLink={(c) => `/contacts/${c.id}`}
+      searchable
+      searchPlaceholder="Search by name, email, phone, job title"
       rowLabel={(c) =>
         [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email || c.id
       }

@@ -53,6 +53,8 @@ export function Companies() {
       emptyMessage="No companies yet."
       formFields={fields}
       rowLink={(c) => `/companies/${c.id}`}
+      searchable
+      searchPlaceholder="Search by name, domain, industry"
     />
   );
 }

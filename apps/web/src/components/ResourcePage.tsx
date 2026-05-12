@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useDebounce } from "@/lib/useDebounce";
 import { FormDialog, type FieldSpec, type FormValues } from "./FormDialog";
 
 export type Column<T> = {
@@ -12,23 +13,29 @@ export type Column<T> = {
 
 type Page<T> = { items: T[]; total: number; limit: number; offset: number };
 
+type ExtraFilter = {
+  /** Param name in the URL */
+  param: string;
+  label: string;
+  options: { value: string; label: string }[];
+};
+
 type Props<T extends { id: string }> = {
   title: string;
   endpoint: string;
   newButtonLabel?: string;
   columns: Column<T>[];
   emptyMessage?: string;
-
-  /** Form schema. If provided, the New button opens a slide-over with these fields. */
   formFields?: FieldSpec[];
-  /** Map a row to initial form values when editing. Default: spread the row. */
   rowToFormValues?: (row: T) => FormValues;
-  /** Map form values to the request body (e.g. add defaults). Default: pass through. */
   formValuesToBody?: (values: FormValues) => unknown;
-  /** Build a short, human label for a row (used in delete-confirm). */
   rowLabel?: (row: T) => string;
-  /** If set, the first cell of every row becomes a link to this path. */
   rowLink?: (row: T) => string;
+  /** When set, show a search input that filters via ?q=. */
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  /** Extra dropdown filters mapped to URL query parameters. */
+  filters?: ExtraFilter[];
 };
 
 export function ResourcePage<T extends { id: string }>({
@@ -49,13 +56,40 @@ export function ResourcePage<T extends { id: string }>({
       (row as unknown as { name?: string; email?: string; subject?: string })
         .subject ??
       row.id),
+  searchable = false,
+  searchPlaceholder = "Search…",
+  filters = [],
 }: Props<T>) {
   const qc = useQueryClient();
-  const queryKey = [endpoint];
+  const [params, setParams] = useSearchParams();
 
+  // Search input local state, mirrored to URL after debounce.
+  const initialQ = params.get("q") ?? "";
+  const [q, setQ] = useState(initialQ);
+  const debouncedQ = useDebounce(q, 300);
+
+  // Reflect debounced search into URL.
+  if (debouncedQ !== (params.get("q") ?? "")) {
+    const next = new URLSearchParams(params);
+    if (debouncedQ) next.set("q", debouncedQ);
+    else next.delete("q");
+    setParams(next, { replace: true });
+  }
+
+  // Build the request query string from the current URL params.
+  const requestParams = new URLSearchParams();
+  requestParams.set("limit", "100");
+  if (debouncedQ) requestParams.set("q", debouncedQ);
+  for (const f of filters) {
+    const val = params.get(f.param);
+    if (val) requestParams.set(f.param, val);
+  }
+  const requestString = requestParams.toString();
+
+  const queryKey = [endpoint, requestString];
   const { data, isLoading, error } = useQuery<Page<T>>({
     queryKey,
-    queryFn: () => api<Page<T>>(`${endpoint}?limit=100`),
+    queryFn: () => api<Page<T>>(`${endpoint}?${requestString}`),
   });
 
   const [dialog, setDialog] = useState<
@@ -67,18 +101,18 @@ export function ResourcePage<T extends { id: string }>({
   const createMut = useMutation({
     mutationFn: (body: unknown) =>
       api<T>(endpoint, { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [endpoint] }),
   });
 
   const updateMut = useMutation({
     mutationFn: ({ id, body }: { id: string; body: unknown }) =>
       api<T>(`${endpoint}/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [endpoint] }),
   });
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => api<void>(`${endpoint}/${id}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [endpoint] }),
   });
 
   const allColumns: Column<T>[] = formFields
@@ -120,6 +154,18 @@ export function ResourcePage<T extends { id: string }>({
     }
   }
 
+  function setFilter(param: string, value: string) {
+    const next = new URLSearchParams(params);
+    if (value) next.set(param, value);
+    else next.delete(param);
+    setParams(next, { replace: true });
+  }
+
+  const inputCls =
+    "rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900";
+
+  const hasAnyFilter = !!debouncedQ || filters.some((f) => params.get(f.param));
+
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -134,6 +180,50 @@ export function ResourcePage<T extends { id: string }>({
         )}
       </div>
 
+      {(searchable || filters.length > 0) && (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {searchable && (
+            <input
+              type="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder={searchPlaceholder}
+              className={`${inputCls} flex-1 min-w-[200px] max-w-md`}
+              autoFocus={!!initialQ}
+            />
+          )}
+          {filters.map((f) => (
+            <select
+              key={f.param}
+              value={params.get(f.param) ?? ""}
+              onChange={(e) => setFilter(f.param, e.target.value)}
+              className={inputCls}
+            >
+              <option value="">{f.label}: any</option>
+              {f.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {f.label}: {o.label}
+                </option>
+              ))}
+            </select>
+          ))}
+          {hasAnyFilter && (
+            <button
+              onClick={() => {
+                setQ("");
+                const next = new URLSearchParams(params);
+                next.delete("q");
+                for (const f of filters) next.delete(f.param);
+                setParams(next, { replace: true });
+              }}
+              className="text-xs text-slate-500 hover:text-slate-900 underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="mt-6 overflow-hidden rounded-lg ring-1 ring-slate-200 bg-white">
         {isLoading && <div className="p-4 text-slate-500">Loading…</div>}
         {error && (
@@ -142,7 +232,9 @@ export function ResourcePage<T extends { id: string }>({
           </div>
         )}
         {data && data.items.length === 0 && (
-          <div className="p-8 text-center text-slate-500">{emptyMessage}</div>
+          <div className="p-8 text-center text-slate-500">
+            {hasAnyFilter ? "No items match your filters." : emptyMessage}
+          </div>
         )}
         {data && data.items.length > 0 && (
           <table className="w-full text-sm">
@@ -160,7 +252,6 @@ export function ResourcePage<T extends { id: string }>({
                 <tr key={row.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
                   {allColumns.map((c, idx) => {
                     const content = c.cell(row);
-                    // First cell becomes the row link if rowLink is provided.
                     const wrapped = rowLink && idx === 0 ? (
                       <Link to={rowLink(row)} className="hover:underline">
                         {content}

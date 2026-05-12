@@ -127,6 +127,8 @@ export function Activities() {
         return body;
       }}
       rowLabel={(a) => a.subject ?? `${a.type} on ${a.target_type}`}
+      searchable
+      searchPlaceholder="Search activities"
     />
   );
 }
