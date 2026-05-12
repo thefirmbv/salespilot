@@ -179,6 +179,45 @@ class HaloPSAClient:
         """Single call returning all quotations (with details) across all clients."""
         return await self._list_quotations(client_id=None)
 
+    # ----- Mail campaigns (Marketing module) -----
+
+    async def list_mail_campaigns(self) -> list[dict[str, Any]]:
+        """All mail campaigns. Requires the 'Mail Campaign' API permission
+        in HaloPSA. Returns [] on 403 so callers can handle gracefully."""
+        try:
+            data = await self._request(
+                "GET",
+                "/api/MailCampaign",
+                params={"pageinate": "false", "include_details": "true"},
+            )
+        except HaloPSAError as e:
+            if "403" in str(e):
+                return []
+            raise
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return (
+                data.get("mailcampaigns")
+                or data.get("mailCampaigns")
+                or data.get("campaigns")
+                or data.get("records")
+                or []
+            )
+        return []
+
+    async def get_mail_campaign(self, campaign_id: int) -> dict[str, Any] | None:
+        """Detail of one campaign (used for recipient lists / engagement)."""
+        try:
+            data = await self._request("GET", f"/api/MailCampaign/{campaign_id}")
+        except HaloPSAError as e:
+            if "403" in str(e) or "404" in str(e):
+                return None
+            raise
+        if isinstance(data, dict):
+            return data
+        return None
+
     async def _list_quotations(
         self, client_id: int | None
     ) -> list[dict[str, Any]]:

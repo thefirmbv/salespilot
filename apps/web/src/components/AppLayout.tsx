@@ -184,6 +184,7 @@ export function AppLayout() {
       items: [
         { to: "/sequences", label: "Sequences", icon: "send" },
         { to: "/linkedin", label: "LinkedIn", icon: "linkedin" },
+        { to: "/mail-campaigns", label: "Mail Campaigns", icon: "megaphone" },
       ],
     },
     {

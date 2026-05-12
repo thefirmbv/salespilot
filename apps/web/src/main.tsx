@@ -15,6 +15,8 @@ import { Sequences } from "./pages/Sequences";
 import { SequenceEditor } from "./pages/SequenceEditor";
 import { LinkedInOutreach } from "./pages/LinkedInOutreach";
 import { Quotations } from "./pages/Quotations";
+import { MailCampaigns } from "./pages/MailCampaigns";
+import { MailCampaignDetail } from "./pages/MailCampaignDetail";
 import { CompanyDetail } from "./pages/CompanyDetail";
 import { Deals } from "./pages/Deals";
 import { DealDetail } from "./pages/DealDetail";
@@ -55,6 +57,8 @@ createRoot(root).render(
               <Route path="/sequences/:id" element={<SequenceEditor />} />
               <Route path="/linkedin" element={<LinkedInOutreach />} />
               <Route path="/quotations" element={<Quotations />} />
+              <Route path="/mail-campaigns" element={<MailCampaigns />} />
+              <Route path="/mail-campaigns/:id" element={<MailCampaignDetail />} />
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/contacts/:id" element={<ContactDetail />} />
               <Route path="/companies/:id" element={<CompanyDetail />} />

@@ -171,14 +171,23 @@ async def _ensure_deal_for_quotation(
     quotation_subject: str | None,
     amount: Decimal | None,
     status: str,
+    quotation_halopsa_id: int,
 ) -> tuple[Deal, bool]:
     """Pick or create a Deal to attach this quotation to (Option A: auto-link).
 
-    Rules:
-      - if the company has exactly one open Deal, use it
-      - if multiple open Deals, prefer the most recently updated
-      - if none, create one in the org's first pipeline + first stage
+    Lookup order (most specific first):
+      1. The deal that this quotation is *already* linked to (returned via
+         row.deal_id from the caller — handled there, not here)
+      2. A single open Deal for this company -> reuse
+      3. Multiple open Deals -> pick the most recently updated
+      4. Otherwise, fall through to creating a new Deal
+
+    NOTE: we never re-create a Deal just because there are no more *open*
+    deals — if a Deal already exists for this company we keep linking new
+    quotations to it (it will be re-opened during _recompute_deal_statuses
+    if any quotation is still open).
     """
+    # 1) Prefer an existing OPEN deal for this company.
     open_deals = (
         await db.execute(
             select(Deal).where(Deal.company_id == company.id, Deal.status == "open")
@@ -189,6 +198,23 @@ async def _ensure_deal_for_quotation(
     if len(open_deals) > 1:
         return max(open_deals, key=lambda d: d.updated_at or d.created_at), False
 
+    # 2) No open deal but maybe the company already has a *closed* deal we
+    # can reuse for a new quotation (so we don't keep duplicating deals on
+    # every sync). Only reuse a closed deal if the new quotation is also
+    # closed (accepted/rejected/expired) — otherwise create a fresh open
+    # deal for the new active quotation.
+    if not _is_open(status):
+        any_deals = (
+            await db.execute(
+                select(Deal).where(Deal.company_id == company.id)
+                .order_by(Deal.updated_at.desc())
+                .limit(1)
+            )
+        ).scalars().all()
+        if any_deals:
+            return any_deals[0], False
+
+    # 3) Otherwise create a new Deal.
     from salespilot.models.crm import Pipeline, Stage
 
     pipeline = (
@@ -359,6 +385,7 @@ async def sync_quotations_for_org(
                 quotation_subject=mapped["subject"],
                 amount=mapped["amount_gross"] or mapped["amount_net"],
                 status=mapped["status"],
+                quotation_halopsa_id=halopsa_id,
             )
             deal_id = deal.id
             if was_created:
@@ -393,6 +420,12 @@ async def sync_quotations_for_org(
             db, org_id=org_id, quotation=row, company=company
         )
 
+    # After upserting every quotation, recompute the deal status for the
+    # affected deals so that deal.status reflects the *best* outcome
+    # across all linked quotations (a single accepted quote wins the deal,
+    # all rejected/expired loses it, otherwise it stays open).
+    deals_recomputed = await _recompute_deal_statuses(db, org_id=org_id)
+
     return {
         "fetched": fetched,
         "created": created,
@@ -400,4 +433,118 @@ async def sync_quotations_for_org(
         "deals_created": deals_created,
         "reminders_scheduled": reminders,
         "skipped_no_company": skipped_no_company,
+        "deals_recomputed": deals_recomputed,
     }
+
+
+async def _recompute_deal_statuses(
+    db: AsyncSession, *, org_id: UUID
+) -> int:
+    """Walk every deal that has at least one linked quotation and reset its
+    status + amount based on those quotations.
+
+    Rules:
+      - any quotation with status='accepted' -> deal won, closed_at = the
+        accepted_at of that quote
+      - else if all quotations are rejected/expired -> deal lost
+      - else -> deal open
+      - amount = max amount_gross|amount_net over the quotations (we prefer
+        the highest because that's typically the latest/most-complete one)
+    """
+    from salespilot.models.crm import DealStatus
+
+    from salespilot.models.crm import Stage
+
+    # Pre-load all stages per pipeline so we can map status -> stage_id
+    # without N+1 lookups during the deal loop.
+    all_stages = (await db.execute(select(Stage))).scalars().all()
+    pipeline_stages: dict[UUID, list[Stage]] = {}
+    for s in all_stages:
+        pipeline_stages.setdefault(s.pipeline_id, []).append(s)
+    for pid in pipeline_stages:
+        pipeline_stages[pid].sort(key=lambda s: s.position)
+
+    deals = (
+        await db.execute(
+            select(Deal).where(Deal.org_id == org_id)
+        )
+    ).scalars().all()
+    changed = 0
+    for deal in deals:
+        quotes = (
+            await db.execute(
+                select(Quotation).where(Quotation.deal_id == deal.id)
+            )
+        ).scalars().all()
+        if not quotes:
+            continue
+        statuses = {q.status for q in quotes}
+        amounts = [q.amount_gross or q.amount_net or Decimal("0") for q in quotes]
+        accepted_quotes = [q for q in quotes if q.status == "accepted"]
+
+        if accepted_quotes:
+            target_status = DealStatus.WON
+            # closed_at = latest accepted_at among the accepted quotes
+            target_closed = max(
+                (q.accepted_at for q in accepted_quotes if q.accepted_at),
+                default=None,
+            )
+            # For won deals, the amount is the sum of accepted quote amounts.
+            target_amount = sum(
+                (q.amount_gross or q.amount_net or Decimal("0") for q in accepted_quotes),
+                start=Decimal("0"),
+            )
+        elif statuses and statuses.issubset({"rejected", "expired"}):
+            target_status = DealStatus.LOST
+            # Use the most recent rejected_at as closed_at
+            target_closed = max(
+                (q.rejected_at for q in quotes if q.rejected_at),
+                default=None,
+            )
+            target_amount = max(amounts) if amounts else Decimal("0")
+        else:
+            target_status = DealStatus.OPEN
+            target_closed = None
+            target_amount = max(amounts) if amounts else Decimal("0")
+
+        cur_status = deal.status.value if hasattr(deal.status, "value") else str(deal.status)
+        want_status_str = target_status.value
+        target_stage_id = _stage_id_for_status(deal.pipeline_id, target_status, pipeline_stages)
+        if (
+            cur_status != want_status_str
+            or deal.amount != target_amount
+            or deal.closed_at != target_closed
+            or (target_stage_id is not None and deal.stage_id != target_stage_id)
+        ):
+            deal.status = target_status
+            deal.amount = target_amount
+            deal.closed_at = target_closed
+            if target_stage_id is not None:
+                deal.stage_id = target_stage_id
+            changed += 1
+
+    await db.flush()
+    return changed
+
+
+def _stage_id_for_status(
+    pipeline_id: UUID, status: "DealStatus", stages_by_pipeline: dict
+) -> UUID | None:
+    """Pick the appropriate stage for a deal's new status.
+
+    For won -> first stage with is_won=True (or last position)
+    For lost -> first stage with is_lost=True (or last position)
+    For open -> leave stage unchanged (we don't know which stage)
+    """
+    from salespilot.models.crm import DealStatus
+
+    stages = stages_by_pipeline.get(pipeline_id, [])
+    if not stages:
+        return None
+    if status == DealStatus.WON:
+        won = [s for s in stages if getattr(s, "is_won", False)]
+        return won[0].id if won else None
+    if status == DealStatus.LOST:
+        lost = [s for s in stages if getattr(s, "is_lost", False)]
+        return lost[0].id if lost else None
+    return None  # open: don't change

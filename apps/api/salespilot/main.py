@@ -22,6 +22,7 @@ from salespilot.api.autopilot import router as autopilot_router
 from salespilot.api.quotations import router as quotations_router
 from salespilot.api.deals_enriched import router as deals_enriched_router
 from salespilot.api.activities_enriched import router as activities_enriched_router
+from salespilot.api.mail_campaigns import router as mail_campaigns_router
 from salespilot.api.branding import router as branding_router, uploads_router as branding_uploads_router
 from salespilot.api.jobs_and_webhooks import (
     internal_router as autopilot_internal_router,
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(quotations_router, prefix=prefix)
     app.include_router(deals_enriched_router, prefix=prefix)
     app.include_router(activities_enriched_router, prefix=prefix)
+    app.include_router(mail_campaigns_router, prefix=prefix)
     app.include_router(branding_router, prefix=prefix)
     app.include_router(branding_uploads_router, prefix=prefix)
     app.include_router(autopilot_internal_router, prefix=prefix)
