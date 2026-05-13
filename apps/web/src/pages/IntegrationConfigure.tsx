@@ -82,6 +82,10 @@ const KINDS: Record<string, KindMeta> = {
       { name: "default_reply_to", label: "Default reply-to", placeholder: "jan@it-gemak.nl" },
       { name: "api_key", label: "API key (Domain Sending key)", type: "password", secret: true, required: true, help: "Stored encrypted. Leave blank to keep existing." },
       { name: "webhook_signing_key", label: "HTTP webhook signing key", type: "password", secret: true, help: "From Mailgun → Sending → Webhooks. Used to verify event + inbound webhooks." },
+      // ---- Sender-reputation throttle ----
+      { name: "limits.max_per_day", label: "Max berichten per dag (24u glijdend)", placeholder: "30", help: "Conservatief voor warm-up van een nieuw (sub)domein. Bump na 2 weken zonder bounces." },
+      { name: "limits.max_per_hour", label: "Max berichten per uur", placeholder: "6", help: "Spreidt belasting over de dag voor goede sender-reputatie." },
+      { name: "limits.min_seconds_gap", label: "Minimum seconden tussen mails", placeholder: "90", help: "Voorkomt dat twee mails binnen X seconden achter elkaar verstuurd worden." },
     ],
   },
   linkedin: {
@@ -198,11 +202,20 @@ export function IntegrationConfigure() {
   useEffect(() => {
     if (integrationQ.data) {
       setEnabled(integrationQ.data.is_enabled);
-      const cfg = integrationQ.data.config_public;
+      const cfg = integrationQ.data.config_public as Record<string, unknown>;
       const next: Record<string, string> = {};
       for (const f of meta?.fields ?? []) {
-        const v = cfg[f.name];
+        // Support dotted field names like "limits.max_per_day" -> cfg.limits.max_per_day
+        let v: unknown;
+        if (f.name.includes(".")) {
+          const [head, tail] = f.name.split(".", 2);
+          const bucket = cfg[head];
+          v = (bucket && typeof bucket === "object") ? (bucket as Record<string, unknown>)[tail] : undefined;
+        } else {
+          v = cfg[f.name];
+        }
         if (typeof v === "string") next[f.name] = v;
+        else if (typeof v === "number") next[f.name] = String(v);
       }
       setForm(next);
     }

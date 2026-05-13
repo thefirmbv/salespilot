@@ -217,13 +217,20 @@ async def _stub_email_verify(db: AsyncSession, org_id: UUID) -> dict[str, Any]:
     }
 
 
+# Real scanners live in wespennest_scanners.py. We keep the stubs above
+# as backstops for jobs that have no real implementation yet (currently
+# only domain_discovery and email_verify, which require seed lists +
+# outbound SMTP we'll wire later).
+from salespilot.integrations import wespennest_scanners as _scanners
+
+
 _JOB_IMPL: dict[str, Callable[[AsyncSession, UUID], Awaitable[dict[str, Any]]]] = {
-    "overname_monitor": _stub_overname_monitor,
+    "overname_monitor": _scanners.scan_overname_signals,
     "domain_discovery": _stub_domain_discovery,
-    "m365_scanner": _stub_m365_scanner,
-    "msp_fingerprint": _stub_msp_fingerprint,
-    "kvk_geofilter": _stub_kvk_geofilter,
-    "decision_maker_finder": _stub_decision_maker_finder,
+    "m365_scanner": _scanners.scan_domain_m365,
+    "msp_fingerprint": _scanners.scan_domain_msp_fingerprint,
+    "kvk_geofilter": _scanners.scan_kvk_geofilter,
+    "decision_maker_finder": _scanners.scan_decision_makers,
     "email_verify": _stub_email_verify,
 }
 

@@ -29,6 +29,10 @@ from salespilot.integrations.autopilot_engine import (
 )
 from salespilot.integrations.mailgun import (
     MailgunClient,
+)
+from salespilot.integrations.mail_throttle import check_send_quota
+from salespilot.integrations.mailgun import (
+    MailgunCredentials,
     MailgunCredentials,
     MailgunError,
     verify_webhook_signature,
@@ -262,6 +266,18 @@ async def _process_enrollment(
             created_at=datetime.now(UTC),
         )
         db.add(msg_row)
+
+        # Sender-reputation throttle. Conservative on a new subdomain;
+        # configurable via integrations.config_json.limits.
+        allowed, retry_after, reason = await check_send_quota(
+            db, org_id=enr.org_id, integ=mg_row
+        )
+        if not allowed:
+            msg_row.status = "throttled"
+            msg_row.error = f"rate-limit: {reason}"
+            enr.last_action_at = datetime.now(UTC)
+            enr.next_action_at = datetime.now(UTC) + timedelta(seconds=retry_after)
+            return f"throttled:{reason}"
 
         from_full = f'"{seq.from_name}" <{seq.from_email}>'
         try:
@@ -711,4 +727,54 @@ async def social_tick(
         "published": total_published,
         "failed": total_failed,
     }
+
+
+@internal_router.post("/wespennest/tick")
+async def wespennest_tick(
+    x_internal_token: str = Header(default=""),
+) -> dict[str, Any]:
+    """Run periodic Wespennest scanners for every org.
+
+    Default schedule (cron-side):
+      - this endpoint is hit once every 4 hours
+      - it runs overname_monitor + m365_scanner + msp_fingerprint
+        + kvk_geofilter + decision_maker_finder in sequence per org
+    """
+    settings = get_settings()
+    expected = settings.autopilot_internal_token.get_secret_value()
+    if not expected or x_internal_token != expected:
+        raise HTTPException(status_code=401, detail="bad internal token")
+
+    from salespilot.integrations.wespennest_pipeline import run_pipeline_job
+
+    results: list[dict[str, Any]] = []
+    async with get_sessionmaker()() as db:
+        orgs = (await db.execute(select(Organization))).scalars().all()
+
+    for org in orgs:
+        async with get_sessionmaker()() as db:
+            await _set_org_context(db, org.id)
+            for kind in (
+                "overname_monitor",
+                "m365_scanner",
+                "msp_fingerprint",
+                "kvk_geofilter",
+                "decision_maker_finder",
+            ):
+                try:
+                    run = await run_pipeline_job(db, org_id=org.id, job_kind=kind)
+                    results.append({
+                        "org": str(org.id), "kind": kind,
+                        "status": run.status,
+                        "processed": run.items_processed,
+                        "created": run.items_created,
+                    })
+                except Exception as e:  # noqa: BLE001
+                    results.append({
+                        "org": str(org.id), "kind": kind,
+                        "status": "failed", "error": str(e)[:200],
+                    })
+            await db.commit()
+
+    return {"ok": True, "runs": len(results), "results": results}
 

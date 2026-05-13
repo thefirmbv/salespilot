@@ -98,6 +98,10 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
             "api_key_set": bool(cfg.get("api_key")),
         }
     if kind == MAILGUN_KIND:
+        # Expose 'limits' so the frontend can prefill throttle fields.
+        limits = cfg.get("limits") or {}
+        if not isinstance(limits, dict):
+            limits = {}
         return {
             "base_url": cfg.get("base_url") or "api.eu.mailgun.net",
             "domain": cfg.get("domain"),
@@ -106,6 +110,11 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
             "default_reply_to": cfg.get("default_reply_to"),
             "api_key_set": bool(cfg.get("api_key")),
             "webhook_signing_key_set": bool(cfg.get("webhook_signing_key")),
+            "limits": {
+                "max_per_day": limits.get("max_per_day") or 30,
+                "max_per_hour": limits.get("max_per_hour") or 6,
+                "min_seconds_gap": limits.get("min_seconds_gap") or 90,
+            },
         }
     if kind == LINKEDIN_KIND:
         return {
@@ -240,13 +249,38 @@ def _make_kind_routes(kind: str):
     @router.put(f"/{kind}", response_model=IntegrationPublic)
     async def upsert_integration(data: IntegrationUpsert, auth: CurrentAuth, db: Db) -> IntegrationPublic:
         row = await _get_integration(db, kind)
-        cfg_dict = dict(data.config or {})
+        # Expand dotted form-keys ("limits.max_per_day") into nested dicts
+        # so the frontend can submit flat fields while we store structured
+        # config. Numeric strings are coerced to int so JSONB stores
+        # proper numbers (the throttle does int(...) defensively anyway).
+        raw_cfg = dict(data.config or {})
+        cfg_dict: dict = {}
+        for k, v in raw_cfg.items():
+            value = v
+            if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+                try:
+                    value = int(v.strip())
+                except ValueError:
+                    value = v
+            if "." in k:
+                head, tail = k.split(".", 1)
+                bucket = cfg_dict.setdefault(head, {})
+                if isinstance(bucket, dict):
+                    bucket[tail] = value
+            else:
+                cfg_dict[k] = value
         secret_keys = ("client_secret", "api_key", "webhook_signing_key", "access_token", "refresh_token")
         if row is not None:
             existing = row.config_json or {}
             for sk in secret_keys:
                 if not cfg_dict.get(sk):
                     cfg_dict[sk] = existing.get(sk, "")
+            # Preserve nested subkeys not in this submission so partial
+            # form-saves don't wipe sibling values.
+            for k, v in (existing or {}).items():
+                if isinstance(v, dict) and isinstance(cfg_dict.get(k), dict):
+                    for sk, sv in v.items():
+                        cfg_dict[k].setdefault(sk, sv)
             row.is_enabled = data.is_enabled
             row.config_json = cfg_dict
         else:

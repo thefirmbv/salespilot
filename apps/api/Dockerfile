@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     curl \
+    dnsutils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -45,6 +46,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Runtime deps only (no compilers).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    dnsutils \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app && useradd --system --gid app --home-dir /app app
 
