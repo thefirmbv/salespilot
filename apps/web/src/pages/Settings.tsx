@@ -26,8 +26,8 @@ export function Settings() {
   return (
     <div>
       <h1 className="text-2xl font-semibold">Settings</h1>
-      <div className="mt-4 border-b border-slate-200">
-        <div className="-mb-px flex gap-1">
+      <div className="mt-4 border-b border-slate-200 overflow-x-auto">
+        <div className="-mb-px flex gap-1 overflow-x-auto">
           <NavLink
             to="integrations"
             className={({ isActive }) =>

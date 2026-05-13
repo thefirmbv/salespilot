@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { CallButton } from "@/components/PhoneLink";
 
 type Activity = {
   id: string;
@@ -178,6 +179,7 @@ export function Activities() {
     <>
     <div>
       <div className="overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">
+        <div className="overflow-x-auto md:overflow-visible">
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
             <h1 className="text-lg font-medium">Activities</h1>
@@ -262,7 +264,7 @@ export function Activities() {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Zoek\u2026"
-            className="ml-auto min-w-[200px] rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="md:ml-auto w-full md:w-auto min-w-0 md:min-w-[200px] rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
 
@@ -281,7 +283,7 @@ export function Activities() {
           return (
             <div
               key={a.id}
-              className={`grid grid-cols-[44px_minmax(0,1.5fr)_minmax(0,1fr)_100px_110px_80px] items-center gap-3 border-b border-slate-100 px-4 py-2.5 ${
+              className={`grid grid-cols-[44px_minmax(0,1.5fr)_minmax(0,1fr)_100px_110px_80px] min-w-[700px] md:min-w-0 items-center gap-3 border-b border-slate-100 px-4 py-2.5 ${
                 a.is_overdue && a.completed_at === null ? "bg-red-50/30" : ""
               } ${a.completed_at ? "opacity-60" : ""}`}
             >
@@ -334,10 +336,14 @@ export function Activities() {
               <div className={`text-right text-xs tabular-nums ${a.is_overdue && !a.completed_at ? "text-red-700 font-medium" : "text-slate-600"}`}>
                 {relativeDate(a.due_at)}
               </div>
-              <div className="text-right">
+              <div className="flex justify-end gap-1.5">
+                {!a.completed_at && a.type === "call" && a.phone_override && (
+                  <CallButton phone={a.phone_override} size="sm" />
+                )}
                 {!a.completed_at && (
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       if (a.type === "call") {
                         setCompletingActivity(a);
                       } else {
@@ -345,7 +351,7 @@ export function Activities() {
                       }
                     }}
                     disabled={completeMut.isPending}
-                    className="rounded-md border border-slate-300 px-2 py-0.5 text-[11px] hover:bg-slate-50 disabled:opacity-50"
+                    className="rounded-md border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50 disabled:opacity-50"
                   >
                     Klaar
                   </button>
@@ -355,6 +361,7 @@ export function Activities() {
           );
         })}
       </div>
+    </div>
     </div>
     {showCreate && (
       <ActivityCreateModal

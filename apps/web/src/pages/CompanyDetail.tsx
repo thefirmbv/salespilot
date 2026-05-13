@@ -225,7 +225,7 @@ export function CompanyDetail() {
 
       {/* Tab bar */}
       <div className="border-b border-slate-200">
-        <div className="-mb-px flex gap-1">
+        <div className="-mb-px flex gap-1 overflow-x-auto">
           <button
             type="button"
             onClick={() => setTab("overview")}

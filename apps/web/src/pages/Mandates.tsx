@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { fmtDateTime } from "@/lib/format";
+import { PhoneLink } from "@/components/PhoneLink";
 
 type Mandate = {
   id: string;
@@ -80,6 +81,7 @@ export function Mandates() {
       </div>
 
       <div className="overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">
+        <div className="overflow-x-auto">
         {listQ.isLoading && <div className="p-6 text-sm text-slate-500">Bezig met laden…</div>}
         {listQ.error && (
           <div className="p-6 text-sm text-red-700">
@@ -97,7 +99,7 @@ export function Mandates() {
         )}
         {listQ.data && listQ.data.length > 0 && (
           <>
-            <div className="grid grid-cols-[140px_minmax(0,2fr)_minmax(0,1.5fr)_140px_120px_140px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500">
+            <div className="grid grid-cols-[140px_minmax(0,2fr)_minmax(0,1.5fr)_140px_120px_140px] min-w-[820px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500">
               <div>UMR</div>
               <div>Debiteur</div>
               <div>IBAN</div>
@@ -109,7 +111,7 @@ export function Mandates() {
               <button
                 key={m.id}
                 onClick={() => setSelectedId(m.id)}
-                className="w-full grid grid-cols-[140px_minmax(0,2fr)_minmax(0,1.5fr)_140px_120px_140px] gap-3 border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50"
+                className="grid grid-cols-[140px_minmax(0,2fr)_minmax(0,1.5fr)_140px_120px_140px] min-w-[820px] gap-3 border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 w-full"
               >
                 <div className="font-mono text-xs tabular-nums text-slate-700">{m.umr}</div>
                 <div className="min-w-0">
@@ -130,6 +132,7 @@ export function Mandates() {
             ))}
           </>
         )}
+      </div>
       </div>
 
       {selectedId && <MandateDetailDrawer id={selectedId} onClose={() => setSelectedId(null)} />}
@@ -174,7 +177,7 @@ function MandateDetailDrawer({ id, onClose }: { id: string; onClose: () => void 
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40" onClick={onClose}>
-      <div className="w-full max-w-2xl bg-white shadow-xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full md:max-w-2xl bg-white shadow-xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 bg-white border-b border-slate-200 px-5 py-3 flex items-center justify-between">
           <div>
             <div className="text-[11px] uppercase tracking-wider text-slate-500">SEPA-mandaat</div>
@@ -218,7 +221,7 @@ function MandateDetailDrawer({ id, onClose }: { id: string; onClose: () => void 
               <KV label="Adres" value={`${d.debtor_address}, ${d.debtor_postcode} ${d.debtor_city}`} />
               <KV label="Land" value={d.debtor_country} />
               <KV label="E-mail" value={d.debtor_email} />
-              {d.debtor_phone && <KV label="Telefoon" value={d.debtor_phone} />}
+              {d.debtor_phone && <KV label="Telefoon" value={<PhoneLink phone={d.debtor_phone} />} />}
               {d.debtor_kvk && <KV label="KvK-nummer" value={`${d.debtor_kvk}${d.kvk_verified ? " (geverifieerd)" : ""}`} />}
             </Section>
 
@@ -278,7 +281,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function KV({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
-    <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3 text-sm">
+    <div className="grid grid-cols-1 md:grid-cols-[140px_minmax(0,1fr)] gap-1 md:gap-3 text-sm">
       <div className="text-slate-500">{label}</div>
       <div className={mono ? "font-mono" : ""}>{value}</div>
     </div>

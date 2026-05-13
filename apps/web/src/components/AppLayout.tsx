@@ -1,4 +1,5 @@
-import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -176,7 +177,24 @@ function Badge({
 export function AppLayout() {
   const { me, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const counts = useCounts();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Sluit het mobiele menu bij elke route-wisseling
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Body lock when mobile menu is open (geen page-scroll achter de overlay)
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => { document.body.style.overflow = ""; };
+  }, [mobileMenuOpen]);
 
   const sections: NavSection[] = [
     {
@@ -219,8 +237,45 @@ export function AppLayout() {
 
   return (
     <div className="flex min-h-screen bg-slate-50">
-      <aside className="w-60 border-r border-slate-200 bg-white flex flex-col sticky top-0 h-screen self-start">
-        <div className="px-4 py-5">
+      {/* Mobile top-bar (alleen <md). Bevat hamburger + logo. */}
+      <div className="md:hidden sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2 shadow-sm">
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(true)}
+          aria-label="Open menu"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-md text-slate-700 hover:bg-slate-100"
+        >
+          <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
+          </svg>
+        </button>
+        {me?.current_org?.logo_url ? (
+          <img src={me.current_org.logo_url} alt={me.current_org.name} className="h-7 max-w-[140px] object-contain" />
+        ) : (
+          <div className="text-base font-semibold text-brand-600">SalesPilot</div>
+        )}
+        <div className="w-11"></div>
+      </div>
+
+      {/* Backdrop (alleen wanneer mobile menu open) */}
+      {mobileMenuOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-slate-900/40 transition-opacity"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside
+        className={
+          // Desktop: sticky permanent. Mobile: off-canvas met slide-in.
+          `w-64 md:w-60 border-r border-slate-200 bg-white flex flex-col ` +
+          `md:sticky md:top-0 md:h-screen md:self-start md:translate-x-0 md:z-auto ` +
+          `fixed inset-y-0 left-0 z-50 h-screen transform transition-transform duration-200 ease-out ` +
+          (mobileMenuOpen ? "translate-x-0 " : "-translate-x-full ")
+        }
+      >
+        <div className="flex items-center justify-between px-4 py-5">
           {me?.current_org?.logo_url ? (
             <img
               src={me.current_org.logo_url}
@@ -232,6 +287,17 @@ export function AppLayout() {
               SalesPilot
             </div>
           )}
+          {/* Sluit-knop alleen op mobile */}
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Sluit menu"
+            className="md:hidden inline-flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M6 18L18 6" />
+            </svg>
+          </button>
         </div>
 
         <nav className="px-2 flex-1 overflow-auto">
@@ -304,7 +370,7 @@ export function AppLayout() {
         </div>
       </aside>
 
-      <main className="flex-1 px-8 py-6 overflow-auto bg-slate-50">
+      <main className="flex-1 px-4 py-4 md:px-8 md:py-6 overflow-auto bg-slate-50 min-w-0">
         <Outlet />
       </main>
     </div>

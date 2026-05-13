@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { FormDialog, type FieldSpec, type FormValues } from "@/components/FormDialog";
 import { DetailHeader, FieldList } from "@/components/DetailHeader";
 import { ActivityFeed } from "@/components/ActivityFeed";
+import { PhoneLink } from "@/components/PhoneLink";
 import { dash, fmtMoney, StatusBadge } from "@/lib/format";
 import { loadCompanyOptions } from "@/lib/options";
 
@@ -121,7 +122,7 @@ export function ContactDetail() {
         <FieldList
           fields={[
             ["Email", dash(c.email)],
-            ["Phone", dash(c.phone)],
+            ["Phone", c.phone ? <PhoneLink phone={c.phone} /> : dash(null)],
             ["Job title", dash(c.job_title)],
             [
               "Company",

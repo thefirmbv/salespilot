@@ -181,6 +181,20 @@ const KINDS: Record<string, KindMeta> = {
       { name: "allowed_email_domains", label: "Toegestane email-domeinen", placeholder: "it-gemak.nl,hostingportal.org", help: "Komma-gescheiden lijst. Leeg = alle domeinen toegestaan." },
     ],
   },
+
+  pbx_3cx: {
+    label: "3CX telefooncentrale",
+    description: "Klik op een telefoonnummer in het portaal en bel direct via je 3CX-toestel. Werkt met de 3CX desktop/web-app of de mobiele app op je telefoon.",
+    docsUrl: "https://www.3cx.com/docs/click-to-call-extension/",
+    supportsSync: false,
+    fields: [
+      { name: "pbx_fqdn", label: "3CX hostnaam", placeholder: "pbx.it-gemak.nl of mybedrijf.3cx.eu", help: "De hostnaam van je 3CX centrale, zonder https://. Voor 3CX-protocol-handlers nodig." },
+      { name: "extension", label: "Doorkiesnummer (extension, optioneel)", placeholder: "bv. 100", help: "Jouw 3CX-toestelnummer. Wordt meegestuurd zodat 3CX weet vanaf welk toestel te bellen." },
+      { name: "country_code", label: "Landcode (zonder +)", placeholder: "31", help: "Wordt automatisch toegevoegd aan nummers die met 0 beginnen. Default: 31 (NL)." },
+      { name: "default_outbound_prefix", label: "Uitbelprefix (optioneel)", placeholder: "9 of 0", help: "Sommige 3CX-installaties vereisen een prefix om naar buiten te bellen. Leeg laten als je geen prefix gebruikt." },
+      { name: "click_mode", label: "Belmethode", help: "tel:// = werkt overal, opent je standaard telefoon-app. 3cx:// = opent direct de 3CX-app als die geïnstalleerd is.", placeholder: "tel" },
+    ],
+  },
 };
 
 export function IntegrationConfigure() {
