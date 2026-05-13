@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from salespilot.deps import CurrentAuth, Db
+from salespilot.models.auth import User
 from salespilot.models.crm import Activity, ActivityTarget, Company, Contact, Deal
 from salespilot.models.quotation import Quotation
 
@@ -37,6 +38,16 @@ class ActivityEnriched(BaseModel):
     quotation_amount: str | None = None
     reminder_kind: str | None = None
     is_overdue: bool = False
+    # New fields for manual call-followup workflow
+    assignee_id: UUID | None = None
+    assignee_name: str | None = None
+    author_id: UUID | None = None
+    author_name: str | None = None
+    priority: str = "normal"
+    phone_override: str | None = None
+    outcome: str | None = None
+    outcome_notes: str | None = None
+    next_followup_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -150,6 +161,18 @@ async def list_activities_enriched(
         for q in (await db.execute(select(Quotation).where(Quotation.id.in_(quotation_ids)))).scalars():
             quotations[q.id] = q
 
+    # Author + assignee names (one query for both sets, deduped)
+    user_ids: set[UUID] = set()
+    for a in rows:
+        if a.author_id:
+            user_ids.add(a.author_id)
+        if a.assignee_id:
+            user_ids.add(a.assignee_id)
+    users: dict[UUID, User] = {}
+    if user_ids:
+        for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars():
+            users[u.id] = u
+
     out: list[ActivityEnriched] = []
     for a in rows:
         tt = a.target_type.value if hasattr(a.target_type, "value") else a.target_type
@@ -186,6 +209,21 @@ async def list_activities_enriched(
                 ),
                 reminder_kind=a.reminder_kind,
                 is_overdue=is_overdue,
+                assignee_id=a.assignee_id,
+                assignee_name=(
+                    (users[a.assignee_id].full_name or users[a.assignee_id].email)
+                    if a.assignee_id and a.assignee_id in users else None
+                ),
+                author_id=a.author_id,
+                author_name=(
+                    (users[a.author_id].full_name or users[a.author_id].email)
+                    if a.author_id and a.author_id in users else None
+                ),
+                priority=getattr(a, "priority", None) or "normal",
+                phone_override=getattr(a, "phone_override", None),
+                outcome=getattr(a, "outcome", None),
+                outcome_notes=getattr(a, "outcome_notes", None),
+                next_followup_id=getattr(a, "next_followup_id", None),
                 created_at=a.created_at,
                 updated_at=a.updated_at,
             )

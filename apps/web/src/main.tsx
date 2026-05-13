@@ -80,6 +80,7 @@ createRoot(root).render(
                 <Route path="integrations" element={<IntegrationsSettings />} />
                 <Route path="integrations/:kind" element={<IntegrationConfigure />} />
                 <Route path="branding" element={<BrandingSettings />} />
+                <Route path="management" element={<Management />} />
               </Route>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Route>

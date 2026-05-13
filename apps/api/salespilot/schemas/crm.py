@@ -138,10 +138,18 @@ class ActivityBase(BaseModel):
     body: str | None = None
     due_at: datetime | None = None
     completed_at: datetime | None = None
+    assignee_id: UUID | None = None
+    priority: str = "normal"  # low | normal | high | urgent
+    phone_override: str | None = Field(default=None, max_length=40)
+    quotation_id: UUID | None = None
+    outcome: str | None = None  # reached | voicemail | no_answer | not_relevant
+    outcome_notes: str | None = None
 
 
 class ActivityCreate(ActivityBase):
-    pass
+    # When true, on outcome=no_answer the API auto-schedules a child
+    # follow-up call 2 days later assigned to the same person.
+    auto_followup_on_no_answer: bool = False
 
 
 class ActivityUpdate(BaseModel):
@@ -149,14 +157,27 @@ class ActivityUpdate(BaseModel):
     body: str | None = None
     due_at: datetime | None = None
     completed_at: datetime | None = None
+    assignee_id: UUID | None = None
+    priority: str | None = None
+    phone_override: str | None = None
+    quotation_id: UUID | None = None
+    outcome: str | None = None
+    outcome_notes: str | None = None
+    # When set + outcome=='no_answer', auto-create a 2-day-later child
+    auto_followup_on_no_answer: bool | None = None
 
 
 class ActivityPublic(ActivityBase):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     author_id: UUID | None
-    quotation_id: UUID | None = None
     reminder_kind: str | None = None
+    next_followup_id: UUID | None = None
+    # Enriched server-side for the UI
+    assignee_name: str | None = None
+    author_name: str | None = None
+    target_name: str | None = None
+    quotation_label: str | None = None
     created_at: datetime
     updated_at: datetime
 

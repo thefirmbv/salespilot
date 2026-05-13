@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from salespilot.integrations.halopsa import HaloPSAClient, HaloPSAError
@@ -322,6 +322,34 @@ async def sync_mail_campaigns_for_org(
                     existing.contact_id = contact_id
                 existing.raw = r_raw
                 recipients_synced += 1
+
+        # Aggregate per-recipient state back onto the campaign row so the
+        # overview shows real open/click rates instead of HaloPSA-zero.
+        if recipients_raw:
+            agg = (
+                await db.execute(
+                    select(
+                        func.count(MailCampaignRecipient.id).label("total"),
+                        func.count(MailCampaignRecipient.delivered_at).label("delivered"),
+                        func.count(MailCampaignRecipient.opened_at).label("opened"),
+                        func.count(MailCampaignRecipient.clicked_at).label("clicked"),
+                        func.count(MailCampaignRecipient.bounced_at).label("bounced"),
+                    ).where(MailCampaignRecipient.campaign_id == row.id)
+                )
+            ).one()
+            # Only overwrite if our aggregate is strictly larger than what
+            # HaloPSA reported (so a campaign with HaloPSA's own counters
+            # doesn't get truncated by an incomplete recipient sync).
+            if (agg.total or 0) > (row.recipients_total or 0):
+                row.recipients_total = int(agg.total or 0)
+            if (agg.delivered or 0) > (row.delivered_count or 0):
+                row.delivered_count = int(agg.delivered or 0)
+            if (agg.opened or 0) > (row.opened_count or 0):
+                row.opened_count = int(agg.opened or 0)
+            if (agg.clicked or 0) > (row.clicked_count or 0):
+                row.clicked_count = int(agg.clicked or 0)
+            if (agg.bounced or 0) > (row.bounced_count or 0):
+                row.bounced_count = int(agg.bounced or 0)
 
     await db.flush()
     return {

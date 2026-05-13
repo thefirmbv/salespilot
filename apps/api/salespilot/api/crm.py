@@ -87,6 +87,62 @@ deals_router = make_crud_router(
     sortable_fields=("name", "amount", "expected_close_date", "status", "closed_at", "updated_at"),
 )
 
+async def _activity_before_save(item: Any, db: AsyncSession) -> None:
+    """Activity-specific business rules:
+      * Stamp author_id on first create (we don't overwrite on edit so the
+        original creator stays attributed even if someone else edits later).
+      * If outcome was just set to 'no_answer' AND the user requested an
+        auto follow-up, create a child Activity 2 days later assigned to
+        the same person, then link via next_followup_id.
+      * If the activity has no assignee, default to the author.
+    """
+    from uuid import uuid4
+    from datetime import timedelta
+    if not isinstance(item, Activity):
+        return
+
+    auth_user_id = getattr(item, "_auth_user_id", None)
+    if item.author_id is None and auth_user_id is not None:
+        item.author_id = auth_user_id
+    if item.assignee_id is None:
+        item.assignee_id = item.author_id
+
+    # Auto-followup on no_answer. The flag arrives via the UI-only
+    # ActivityCreate/Update field; _crud stashes it as `_input_...`.
+    wants_followup = bool(
+        getattr(item, "_input_auto_followup_on_no_answer", False)
+    )
+    if (
+        wants_followup
+        and item.outcome == "no_answer"
+        and item.next_followup_id is None
+    ):
+        now = datetime.now(UTC)
+        # Default: same time of day, 2 days later
+        followup_due = (item.due_at or now) + timedelta(days=2)
+        child = Activity(
+            id=uuid4(),
+            org_id=item.org_id,
+            type=item.type,
+            target_type=item.target_type,
+            target_id=item.target_id,
+            subject=(f"Follow-up: {item.subject}" if item.subject else "Follow-up bel"),
+            body=item.outcome_notes,
+            due_at=followup_due,
+            assignee_id=item.assignee_id,
+            author_id=item.author_id,
+            priority=item.priority,
+            phone_override=item.phone_override,
+            quotation_id=item.quotation_id,
+            reminder_kind="auto_no_answer_followup",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(child)
+        await db.flush()
+        item.next_followup_id = child.id
+
+
 activities_router = make_crud_router(
     prefix="/activities",
     tag="activities",
@@ -94,7 +150,8 @@ activities_router = make_crud_router(
     create_schema=ActivityCreate,
     update_schema=ActivityUpdate,
     public_schema=ActivityPublic,
-    filterable_fields=("target_type", "target_id", "type", "author_id"),
+    filterable_fields=("target_type", "target_id", "type", "author_id", "assignee_id", "priority", "outcome"),
     searchable_fields=("subject", "body"),
-    sortable_fields=("type", "subject", "due_at", "completed_at", "updated_at"),
+    sortable_fields=("type", "subject", "due_at", "completed_at", "updated_at", "priority"),
+    on_before_save=_activity_before_save,
 )

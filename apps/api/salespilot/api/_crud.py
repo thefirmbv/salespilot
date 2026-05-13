@@ -118,7 +118,19 @@ def make_crud_router(
     async def create_item(payload: create_schema, db: Db, auth: CurrentAuth) -> Any:  # type: ignore[valid-type]
         data = payload.model_dump(exclude_unset=False)
         data["org_id"] = auth.org_id
-        item = model(**data)
+        # Strip fields that aren't real model columns -- create_schema may
+        # include UI-only flags (e.g. auto_followup_on_no_answer) that are
+        # handled by the on_before_save hook.
+        model_keys = {c.name for c in model.__table__.columns}
+        model_data = {k: v for k, v in data.items() if k in model_keys}
+        item = model(**model_data)
+        # Keep the rest accessible to the hook via __pydantic_extra__-like
+        # attribute so on_before_save can inspect 'auto_followup_on_no_answer'.
+        for k, v in data.items():
+            if k not in model_keys:
+                setattr(item, f"_input_{k}", v)
+        # Hook can read this to know who created the row
+        item._auth_user_id = auth.user_id
         db.add(item)
         if on_before_save is not None:
             await on_before_save(item, db)
@@ -139,8 +151,13 @@ def make_crud_router(
         if item is None:
             raise HTTPException(status_code=404, detail=f"{tag} not found")
         changes = payload.model_dump(exclude_unset=True)
+        model_keys = {c.name for c in model.__table__.columns}
         for k, v in changes.items():
-            setattr(item, k, v)
+            if k in model_keys:
+                setattr(item, k, v)
+            else:
+                # Pass UI-only flags to the hook via prefixed attrs
+                setattr(item, f"_input_{k}", v)
         if on_before_save is not None:
             await on_before_save(item, db)
         await db.flush()

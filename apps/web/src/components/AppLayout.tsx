@@ -214,17 +214,11 @@ export function AppLayout() {
         { to: "/quotations", label: "Quotations", icon: "globe", badge: counts.quotations_open },
       ],
     },
-    {
-      title: "Admin",
-      items: [
-        { to: "/management", label: "Management", icon: "shield" },
-      ],
-    },
   ];
 
   return (
-    <div className="flex min-h-full bg-slate-50">
-      <aside className="w-60 border-r border-slate-200 bg-white flex flex-col">
+    <div className="flex min-h-screen bg-slate-50">
+      <aside className="w-60 border-r border-slate-200 bg-white flex flex-col sticky top-0 h-screen self-start">
         <div className="px-4 py-5">
           {me?.current_org?.logo_url ? (
             <img
@@ -237,9 +231,6 @@ export function AppLayout() {
               SalesPilot
             </div>
           )}
-          <div className="mt-1 text-xs text-slate-500 truncate">
-            {me?.current_org?.name ?? "—"}
-          </div>
         </div>
 
         <nav className="px-2 flex-1 overflow-auto">

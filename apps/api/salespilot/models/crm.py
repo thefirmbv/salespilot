@@ -218,6 +218,23 @@ class Activity(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     # Marks the kind of automatic reminder, e.g. 'quote_followup_14d' or
     # 'quote_followup_28d'. Null for manually-created activities.
     reminder_kind: Mapped[str | None] = mapped_column(String(40))
+    # Who should do this. NULL for legacy auto-followups (those default to
+    # the deal owner via UI fallback). When set, this is the user who'll
+    # see it on their personal "my tasks" view.
+    assignee_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    # low / normal / high / urgent
+    priority: Mapped[str] = mapped_column(String(10), default="normal", nullable=False)
+    # Override the company's main switchboard with a direct-dial number.
+    phone_override: Mapped[str | None] = mapped_column(String(40))
+    # After-call outcome: reached / voicemail / no_answer / not_relevant.
+    # NULL while still open.
+    outcome: Mapped[str | None] = mapped_column(String(20))
+    outcome_notes: Mapped[str | None] = mapped_column(Text)
+    # When 'no_answer' triggers an auto-rescheduled follow-up, this points
+    # to the child activity so the history chain is queryable.
+    next_followup_id: Mapped[UUID | None] = mapped_column()
 
 
 class CustomFieldType(StrEnum):

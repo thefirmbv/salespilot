@@ -27,6 +27,7 @@ from salespilot.api.wespennest import router as wespennest_router
 from salespilot.api.admin import router as admin_router
 from salespilot.api.auth_m365 import router as auth_m365_router
 from salespilot.api.social import router as social_router
+from salespilot.api.companies_extra import router as companies_extra_comms_router
 from salespilot.api.branding import router as branding_router, uploads_router as branding_uploads_router
 from salespilot.api.jobs_and_webhooks import (
     internal_router as autopilot_internal_router,
@@ -87,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router, prefix=prefix)
     app.include_router(integrations_router, prefix=prefix)
     app.include_router(halopsa_company_router, prefix=prefix)
+    app.include_router(companies_extra_comms_router, prefix=prefix)
     app.include_router(companies_router, prefix=prefix)
     app.include_router(contacts_router, prefix=prefix)
     app.include_router(deals_router, prefix=prefix)
