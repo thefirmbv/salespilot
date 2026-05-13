@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
 type IntegrationSummary = {
@@ -35,6 +35,7 @@ const KIND_STYLES: Record<string, { bg: string; fg: string; icon: string }> = {
   crtsh:       { bg: "bg-slate-100", fg: "text-slate-700",  icon: "🔐" },
   hunter:      { bg: "bg-yellow-50", fg: "text-yellow-700", icon: "🎯" },
   apollo:      { bg: "bg-violet-50", fg: "text-violet-700", icon: "🚀" },
+  m365_sso:    { bg: "bg-blue-50",   fg: "text-blue-700",   icon: "🔐" },
 };
 
 function relativeShort(iso: string | null): string {
@@ -52,6 +53,7 @@ function relativeShort(iso: string | null): string {
 }
 
 function ConnectorRow({ i }: { i: IntegrationSummary }) {
+  const qc = useQueryClient();
   const style = KIND_STYLES[i.kind] ?? KIND_STYLES.halopsa;
   const status = i.is_configured && i.is_enabled ? "connected" : i.is_configured ? "paused" : "not_connected";
   const statusStyle = {
@@ -59,7 +61,32 @@ function ConnectorRow({ i }: { i: IntegrationSummary }) {
     paused:        "bg-amber-100   text-amber-800",
     not_connected: "bg-slate-100   text-slate-600",
   }[status];
-  const statusLabel = { connected: "Connected", paused: "Paused", not_connected: "Not connected" }[status];
+  const statusLabel = { connected: "Aan", paused: "Uit", not_connected: "Niet verbonden" }[status];
+
+  // Toggle the enabled flag without going into the detail page. Reads
+  // existing config first so we don't clobber stored secrets.
+  const toggleMut = useMutation({
+    mutationFn: async (nextEnabled: boolean) => {
+      const cur = await api<{ config_public: Record<string, unknown> } | null>(
+        `/integrations/${i.kind}`,
+      );
+      // Build a config payload that re-submits only non-secret fields; the
+      // backend keeps stored secrets when keys are missing.
+      const cfg = (cur?.config_public ?? {}) as Record<string, unknown>;
+      const cleaned: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(cfg)) {
+        if (k.endsWith("_set")) continue;
+        cleaned[k] = v;
+      }
+      return api(`/integrations/${i.kind}`, {
+        method: "PUT",
+        body: JSON.stringify({ is_enabled: nextEnabled, config: cleaned }),
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/integrations"] });
+    },
+  });
 
   return (
     <div className="flex items-center gap-3 rounded-md border border-slate-200 px-4 py-3 hover:bg-slate-50">
@@ -73,6 +100,33 @@ function ConnectorRow({ i }: { i: IntegrationSummary }) {
           {i.last_sync_at && <> · synced {relativeShort(i.last_sync_at)}</>}
         </div>
       </div>
+      {/* Toggle — only meaningful when the integration has been configured */}
+      <button
+        type="button"
+        disabled={!i.is_configured || toggleMut.isPending}
+        onClick={() => toggleMut.mutate(!i.is_enabled)}
+        title={
+          i.is_configured
+            ? i.is_enabled
+              ? "Uitschakelen"
+              : "Inschakelen"
+            : "Eerst verbinden"
+        }
+        className={`relative h-5 w-9 shrink-0 rounded-full transition ${
+          !i.is_configured
+            ? "bg-slate-200 cursor-not-allowed opacity-50"
+            : i.is_enabled
+              ? "bg-emerald-500"
+              : "bg-slate-300"
+        }`}
+        aria-label={`${i.is_enabled ? "Uitschakelen" : "Inschakelen"} ${i.label}`}
+      >
+        <span
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
+            i.is_enabled ? "left-[18px]" : "left-0.5"
+          }`}
+        />
+      </button>
       <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${statusStyle}`}>
         {statusLabel}
       </span>
@@ -80,7 +134,7 @@ function ConnectorRow({ i }: { i: IntegrationSummary }) {
         to={`/settings/integrations/${i.kind}`}
         className="shrink-0 rounded-md border border-slate-300 px-3 py-1 text-xs text-slate-700 hover:bg-white"
       >
-        {i.is_configured ? "Configure" : "Connect"}
+        {i.is_configured ? "Instellen" : "Verbinden"}
       </Link>
     </div>
   );

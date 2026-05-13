@@ -32,6 +32,38 @@ export function Login() {
     }
   }, [params, verifyMagicLink, navigate]);
 
+  // Handle return from Microsoft 365 SSO callback. Backend redirects to
+  // /login#access_token=...&refresh_token=... — we pick those up here.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (!hash || !hash.includes("access_token")) return;
+    const frag = new URLSearchParams(hash.slice(1));
+    const at = frag.get("access_token");
+    const rt = frag.get("refresh_token");
+    if (at && rt) {
+      localStorage.setItem("access_token", at);
+      localStorage.setItem("refresh_token", rt);
+      // Clean the URL and reload so AuthProvider picks up the new token
+      window.history.replaceState(null, "", "/login");
+      window.location.href = "/";
+    }
+  }, []);
+
+  // Render an error when SSO bounced back with ?sso_error=...
+  useEffect(() => {
+    const ssoErr = params.get("sso_error");
+    if (!ssoErr) return;
+    const messages: Record<string, string> = {
+      sso_not_configured: "Microsoft 365 SSO is nog niet geconfigureerd door je beheerder.",
+      domain_not_allowed: "Je email-domein is niet toegestaan voor deze SalesPilot-organisatie.",
+      user_not_provisioned: "Je M365-account is niet bekend. Vraag je beheerder om een uitnodiging.",
+      token_exchange_failed: "Microsoft weigerde de inlog-code. Probeer opnieuw.",
+      no_email: "Microsoft heeft geen e-mailadres meegegeven.",
+    };
+    setError(messages[ssoErr] || `SSO-fout: ${ssoErr}`);
+  }, [params]);
+
   // If already signed in, bounce.
   useEffect(() => {
     if (me) {
@@ -139,6 +171,22 @@ export function Login() {
                 : "Send magic link"}
           </button>
         </form>
+
+        {/* SSO options */}
+        <div className="mt-3 border-t border-slate-200 pt-3">
+          <a
+            href="/api/v1/auth/m365/login"
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <svg width="16" height="16" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
+              <rect x="1" y="1" width="10" height="10" fill="#F25022" />
+              <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
+              <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
+              <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
+            </svg>
+            Inloggen met Microsoft 365
+          </a>
+        </div>
       </div>
     </div>
   );

@@ -167,6 +167,19 @@ const KINDS: Record<string, KindMeta> = {
       { name: "api_key", label: "Apollo API-key", type: "password", secret: true, help: "Stored encrypted." },
     ],
   },
+
+  m365_sso: {
+    label: "Microsoft 365 SSO",
+    description: "Laat gebruikers inloggen met hun M365-account in plaats van een SalesPilot-wachtwoord. Vereist een Azure AD app-registratie. Redirect URL bij Azure: https://sales.hostingportal.org/api/v1/auth/m365/callback",
+    docsUrl: "https://learn.microsoft.com/en-us/azure/active-directory/develop/quickstart-register-app",
+    supportsSync: false,
+    fields: [
+      { name: "tenant_id", label: "Tenant ID", placeholder: "common of jullie-tenant-guid", help: "Gebruik 'common' om alle Microsoft-accounts toe te staan, of jullie eigen tenant-GUID voor strikte beveiliging." },
+      { name: "client_id", label: "Client ID", placeholder: "Azure app Application (client) ID", help: "Van de Azure portal." },
+      { name: "client_secret", label: "Client secret", type: "password", secret: true, help: "Stored encrypted." },
+      { name: "allowed_email_domains", label: "Toegestane email-domeinen", placeholder: "it-gemak.nl,hostingportal.org", help: "Komma-gescheiden lijst. Leeg = alle domeinen toegestaan." },
+    ],
+  },
 };
 
 export function IntegrationConfigure() {

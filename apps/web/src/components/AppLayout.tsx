@@ -213,6 +213,12 @@ export function AppLayout() {
         { to: "/quotations", label: "Quotations", icon: "globe", badge: counts.quotations_open },
       ],
     },
+    {
+      title: "Admin",
+      items: [
+        { to: "/management", label: "Management", icon: "shield" },
+      ],
+    },
   ];
 
   return (

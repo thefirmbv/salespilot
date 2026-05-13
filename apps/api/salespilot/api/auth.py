@@ -11,6 +11,7 @@ from re import sub as re_sub
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from salespilot.config import get_settings
@@ -30,6 +31,7 @@ from salespilot.schemas.auth import (
     TokenPair,
     UserPublic,
 )
+from salespilot.db import raw_session
 from salespilot.security import (
     TokenError,
     create_access_token,
@@ -235,3 +237,46 @@ async def me(auth: CurrentAuth, db: Db) -> MeResponse:
         current_org=current_org,
         memberships=memberships,
     )
+
+
+class AcceptInviteBody(BaseModel):
+    token: str
+    password: str
+    full_name: str | None = None
+
+
+@router.post("/accept-invite", response_model=TokenPair)
+async def accept_invite(data: AcceptInviteBody) -> TokenPair:
+    """Public endpoint - token IS the auth. Sets the password on a pending
+    invited user and immediately logs them in by returning a token pair."""
+    from datetime import UTC, datetime
+    from sqlalchemy import select
+    from salespilot.models.auth import OrgMembership, User
+    from salespilot.security import hash_password, create_access_token, create_refresh_token
+
+    if len(data.password) < 8:
+        raise HTTPException(status_code=400, detail="password too short (min 8)")
+    async with raw_session() as db:
+        user = (
+            await db.execute(select(User).where(User.invite_token == data.token))
+        ).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=400, detail="invalid or expired invite token")
+        user.password_hash = hash_password(data.password)
+        user.invite_token = None
+        if data.full_name and not user.full_name:
+            user.full_name = data.full_name
+        user.last_login_at = datetime.now(UTC)
+        # Pick the user's first membership as the active org for the token
+        m = (
+            await db.execute(
+                select(OrgMembership).where(OrgMembership.user_id == user.id).limit(1)
+            )
+        ).scalar_one_or_none()
+        if m is None:
+            raise HTTPException(status_code=400, detail="user has no organization yet")
+        await db.commit()
+        access = create_access_token(user_id=str(user.id), org_id=str(m.org_id))
+        refresh = create_refresh_token(user_id=str(user.id), org_id=str(m.org_id))
+        return TokenPair(access_token=access, refresh_token=refresh)
+

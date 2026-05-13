@@ -45,6 +45,17 @@ class User(UUIDPrimaryKey, Timestamps, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Cross-org super-admin (founder/Anthropic-style). When true, this user
+    # can see all organizations and create users in any of them.
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Pending-invite tracking
+    invited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invited_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    invite_token: Mapped[str | None] = mapped_column(String(120))
+
     memberships: Mapped[list["OrgMembership"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

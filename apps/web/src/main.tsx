@@ -18,6 +18,8 @@ import { Quotations } from "./pages/Quotations";
 import { MailCampaigns } from "./pages/MailCampaigns";
 import { MailCampaignDetail } from "./pages/MailCampaignDetail";
 import { Wespennest } from "./pages/Wespennest";
+import { Management } from "./pages/Management";
+import { AcceptInvite } from "./pages/AcceptInvite";
 import { CompanyDetail } from "./pages/CompanyDetail";
 import { Deals } from "./pages/Deals";
 import { DealDetail } from "./pages/DealDetail";
@@ -44,6 +46,7 @@ createRoot(root).render(
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
+          <Route path="/accept-invite" element={<AcceptInvite />} />
             <Route
               element={
                 <RequireAuth>
@@ -61,6 +64,7 @@ createRoot(root).render(
               <Route path="/mail-campaigns" element={<MailCampaigns />} />
               <Route path="/mail-campaigns/:id" element={<MailCampaignDetail />} />
               <Route path="/wespennest" element={<Wespennest />} />
+              <Route path="/management" element={<Management />} />
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/contacts/:id" element={<ContactDetail />} />
               <Route path="/companies/:id" element={<CompanyDetail />} />

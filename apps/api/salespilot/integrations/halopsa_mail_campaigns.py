@@ -21,6 +21,18 @@ from salespilot.models.crm import Company, Contact
 from salespilot.models.mail_campaign import MailCampaign, MailCampaignRecipient
 
 
+# Mapping for both string status_name AND integer status codes from
+# HaloPSA. Status int observed in the field: 0=Draft, status_desc is more
+# reliable so we prefer that.
+_CAMPAIGN_STATUS_INT = {
+    0: "draft",
+    1: "scheduled",
+    2: "sending",
+    3: "sent",
+    4: "paused",
+    5: "cancelled",
+}
+
 _CAMPAIGN_STATUS_NAMES = {
     "draft": "draft",
     "scheduled": "scheduled",
@@ -60,6 +72,9 @@ def _normalise_status(name: Any, mapping: dict[str, str], default: str) -> str:
         lower = name.strip().lower()
         if lower in mapping:
             return mapping[lower]
+    if isinstance(name, int):
+        if name in _CAMPAIGN_STATUS_INT:
+            return _CAMPAIGN_STATUS_INT[name]
     return default
 
 
@@ -98,16 +113,40 @@ def _map_campaign(raw: dict[str, Any]) -> dict[str, Any]:
         "from_name": raw.get("fromname") or raw.get("from_name") or raw.get("sender_name"),
         "from_email": raw.get("fromemail") or raw.get("from_email") or raw.get("sender_email"),
         "status": _normalise_status(
-            raw.get("status_name") or raw.get("status"),
+            raw.get("status_name") or raw.get("status_desc") or raw.get("status"),
             _CAMPAIGN_STATUS_NAMES,
             "draft",
         ),
-        "status_label_halopsa": raw.get("status_name") or raw.get("status"),
-        "sent_at": _parse_dt(raw.get("sent_date") or raw.get("date_sent") or raw.get("senddate")),
-        "scheduled_at": _parse_dt(raw.get("schedule_date") or raw.get("scheduled") or raw.get("dateschedule")),
+        # HaloPSA may give an int here -- force to string, never None
+        "status_label_halopsa": (
+            raw.get("status_name")
+            or raw.get("status_desc")
+            or (str(raw.get("status")) if raw.get("status") is not None else None)
+        ),
+        "sent_at": _parse_dt(
+            raw.get("sent_datetime")  # HaloPSA actual field
+            or raw.get("sent_date")
+            or raw.get("date_sent")
+            or raw.get("senddate")
+        ),
+        "scheduled_at": _parse_dt(
+            raw.get("scheduled_datetime")
+            or raw.get("schedule_date")
+            or raw.get("scheduled")
+            or raw.get("dateschedule")
+        ),
         # HaloPSA tends to expose counters as flat ints
-        "recipients_total": _int_or_zero(raw.get("recipients_total") or raw.get("total_recipients") or raw.get("count")),
-        "sent_count": _int_or_zero(raw.get("sent") or raw.get("sent_count")),
+        "recipients_total": _int_or_zero(
+            raw.get("recipients_count")  # HaloPSA actual field
+            or raw.get("recipients_total")
+            or raw.get("total_recipients")
+            or raw.get("count")
+        ),
+        "sent_count": _int_or_zero(
+            raw.get("emails_sent")  # HaloPSA actual field
+            or raw.get("sent")
+            or raw.get("sent_count")
+        ),
         "delivered_count": _int_or_zero(raw.get("delivered") or raw.get("delivered_count")),
         "opened_count": _int_or_zero(raw.get("opens") or raw.get("opened") or raw.get("opened_count") or raw.get("open_count")),
         "clicked_count": _int_or_zero(raw.get("clicks") or raw.get("clicked") or raw.get("clicked_count") or raw.get("click_count")),

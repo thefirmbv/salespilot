@@ -74,6 +74,8 @@ PDOK_KIND = "pdok"
 CRTSH_KIND = "crtsh"
 HUNTER_KIND = "hunter"
 APOLLO_KIND = "apollo"
+# Microsoft 365 SSO -- OAuth login + (later) email/calendar sync
+M365_SSO_KIND = "m365_sso"
 
 
 def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -158,6 +160,17 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
             "base_url": cfg.get("base_url") or "https://api.apollo.io/v1",
             "api_key_set": bool(cfg.get("api_key")),
         }
+    if kind == M365_SSO_KIND:
+        # Microsoft 365 SSO via Azure AD OAuth2. Users with this org-domain
+        # email can log in with their M365 account without setting a SalesPilot
+        # password.
+        return {
+            "tenant_id": cfg.get("tenant_id") or "common",
+            "client_id": cfg.get("client_id"),
+            "client_secret_set": bool(cfg.get("client_secret")),
+            "allowed_email_domains": cfg.get("allowed_email_domains") or [],
+            "auto_create_users": cfg.get("auto_create_users") or False,
+        }
     return {}
 
 
@@ -196,6 +209,8 @@ async def list_integrations(db: Db) -> list[IntegrationSummary]:
         (CRTSH_KIND, "crt.sh (CT logs)", "Gratis Certificate Transparency search — vindt klant-domeinen onder MSP-wildcards."),
         (HUNTER_KIND, "Hunter.io", "Optioneel — email-pattern discovery + verify. 25 gratis/mnd, anders $34+/mnd."),
         (APOLLO_KIND, "Apollo.io", "Optioneel — internationale decision-maker enrichment. $49+/mnd. Voor NL-MKB minder geschikt."),
+        # ---- SSO providers ----
+        (M365_SSO_KIND, "Microsoft 365 SSO", "Single sign-on via Azure AD. Users met een toegestane email-domein loggen in met hun M365-account."),
     ]
     out: list[IntegrationSummary] = []
     for kind, label, desc in known:
@@ -256,6 +271,7 @@ _make_kind_routes(PDOK_KIND)
 _make_kind_routes(CRTSH_KIND)
 _make_kind_routes(HUNTER_KIND)
 _make_kind_routes(APOLLO_KIND)
+_make_kind_routes(M365_SSO_KIND)
 
 
 # ---- HaloPSA test/sync ----
