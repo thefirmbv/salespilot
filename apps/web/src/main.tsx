@@ -20,6 +20,7 @@ import { MailCampaignDetail } from "./pages/MailCampaignDetail";
 import { Wespennest } from "./pages/Wespennest";
 import { Management } from "./pages/Management";
 import { Mandates } from "./pages/Mandates";
+import { Calendar } from "./pages/Calendar";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { SocialPosts, SocialPostEditor } from "./pages/SocialPosts";
 import { CompanyDetail } from "./pages/CompanyDetail";
@@ -68,6 +69,7 @@ createRoot(root).render(
               <Route path="/wespennest" element={<Wespennest />} />
               <Route path="/management" element={<Management />} />
               <Route path="/mandates" element={<Mandates />} />
+              <Route path="/calendar" element={<Calendar />} />
               <Route path="/social" element={<SocialPosts />} />
               <Route path="/social/new" element={<SocialPostEditor />} />
               <Route path="/social/:id" element={<SocialPostEditor />} />

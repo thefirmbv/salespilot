@@ -227,6 +227,12 @@ export function AppLayout() {
       ],
     },
     {
+      title: "Persoonlijk",
+      items: [
+        { to: "/calendar", label: "Mijn agenda", icon: "edit" },
+      ],
+    },
+    {
       title: "External",
       items: [
         { to: "/quotations", label: "Quotations", icon: "globe", badge: counts.quotations_open },
