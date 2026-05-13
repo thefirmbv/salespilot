@@ -36,7 +36,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
 from salespilot.config import get_settings
-from salespilot.db import raw_session
+from salespilot.db import raw_session, tenant_session
 from salespilot.models.integrations import Integration
 
 
@@ -86,13 +86,14 @@ async def linkedin_callback(
     except ValueError:
         return _settings_redirect("bad_state", ok=False)
 
-    async with raw_session() as db:
+    async with tenant_session(org_id) as db:
+        # Integration is tenant-scoped via RLS, so once the org_id GUC is
+        # set the simple kind filter is enough -- no need to repeat the
+        # org_id in WHERE (and a raw_session would have been blocked by
+        # the policy).
         integ = (
             await db.execute(
-                select(Integration).where(
-                    Integration.kind == "linkedin",
-                    Integration.org_id == org_id,
-                )
+                select(Integration).where(Integration.kind == "linkedin")
             )
         ).scalar_one_or_none()
         if integ is None:
