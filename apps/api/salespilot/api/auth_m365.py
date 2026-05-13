@@ -62,21 +62,38 @@ def _login_redirect(error: str | None = None) -> RedirectResponse:
 async def _find_sso_config() -> tuple[Integration, Organization] | None:
     """Pick the first organization with an enabled M365 SSO integration.
 
-    For IT-Gemak's single-org setup this is enough; for multi-org we'd
-    match on email domain at callback time before picking.
+    Integration is TenantScoped via RLS so we can't query across orgs
+    with raw_session() -- the policy would filter every row out. We
+    iterate over every Organization and probe its tenant_session.
     """
+    from salespilot.db import tenant_session
     async with raw_session() as db:
-        rows = (
-            await db.execute(
-                select(Integration, Organization)
-                .join(Organization, Organization.id == Integration.org_id)
-                .where(
-                    Integration.kind == "m365_sso",
-                    Integration.is_enabled == True,  # noqa: E712
+        orgs = (
+            await db.execute(select(Organization).order_by(Organization.created_at))
+        ).scalars().all()
+
+    for org in orgs:
+        async with tenant_session(org.id) as db:
+            integ = (
+                await db.execute(
+                    select(Integration).where(
+                        Integration.kind == "m365_sso",
+                        Integration.is_enabled == True,  # noqa: E712
+                    )
                 )
-            )
-        ).all()
-        return rows[0] if rows else None
+            ).scalar_one_or_none()
+            if integ is not None:
+                # Detach from this session by re-fetching the org plain
+                org_obj = await db.get(Organization, org.id)
+                # Eager-load the JSON config so we don't lazy-load on a
+                # closed session further on
+                _ = integ.config_json
+                if org_obj is not None:
+                    # Expunge so callers can read attrs after session close
+                    db.expunge(integ)
+                    db.expunge(org_obj)
+                    return integ, org_obj
+    return None
 
 
 @router.get("/login")
@@ -174,30 +191,10 @@ async def m365_callback(request: Request, code: str | None = None, error: str | 
             await db.execute(select(User).where(User.email == email))
         ).scalar_one_or_none()
         if user is None:
-            if not cfg.get("auto_create_users"):
-                return _login_redirect(error="user_not_provisioned")
-            # Create a new user + membership in the SSO org.
-            now = datetime.now(UTC)
-            user = User(
-                id=uuid4(),
-                email=email,
-                full_name=full_name,
-                is_active=True,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(user)
-            await db.flush()
-            db.add(
-                OrgMembership(
-                    id=uuid4(),
-                    user_id=user.id,
-                    org_id=default_org.id,
-                    role=OrgRole.MEMBER,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
+            # Hard rule: invitation-only. SSO never auto-creates users
+            # regardless of the integration config -- this avoids the
+            # 'anyone in our tenant can self-provision' foot-gun.
+            return _login_redirect(error="user_not_provisioned")
 
         user.last_login_at = datetime.now(UTC)
         # Pick the user's first membership for the token's org context.

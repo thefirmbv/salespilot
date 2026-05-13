@@ -324,6 +324,7 @@ export function IntegrationConfigure() {
         </div>
 
         {kind === "linkedin" && <LinkedInOAuthBlock cfg={integrationQ.data?.config_public ?? {}} kind={kind!} searchParams={searchParams} setSearchParams={setSearchParams} />}
+        {kind === "m365_sso" && <M365SsoInfoBlock cfg={integrationQ.data?.config_public ?? {}} />}
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <button
@@ -510,6 +511,74 @@ function LinkedInOAuthBlock({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ===== Microsoft 365 SSO info block =====
+
+function M365SsoInfoBlock({ cfg }: { cfg: Record<string, unknown> }) {
+  const callbackUrl = `${window.location.origin}/api/v1/auth/m365/callback`;
+  const loginUrl = `${window.location.origin}/api/v1/auth/m365/login`;
+  const tenantId = (cfg.tenant_id as string) || "";
+  const isStrict = tenantId && tenantId !== "common" && tenantId !== "organizations";
+
+  return (
+    <div className="mt-5 space-y-3">
+      <div className="rounded-md border border-blue-200 bg-blue-50 p-4 space-y-2">
+        <div className="text-[11px] uppercase tracking-wider text-blue-700 font-semibold">Belangrijke beveiligings-info</div>
+        <div className="text-sm text-blue-900">
+          <strong>Alleen uitgenodigde gebruikers</strong> kunnen via M365 inloggen.
+          Dat wordt afgedwongen door de server, zelfs als iemand een geldig
+          M365-account in jullie tenant heeft. Iemand zonder uitnodiging krijgt
+          de melding <code className="font-mono text-xs bg-white px-1 py-0.5 rounded">user_not_provisioned</code> en kan niet binnen.
+        </div>
+        <div className="text-xs text-blue-800">
+          Nieuwe collega&apos;s uitnodigen: <a href="/settings/management" className="underline">Settings → Management</a>.
+        </div>
+      </div>
+
+      <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-2">
+        <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Te configureren in Entra ID</div>
+        <div className="text-sm space-y-2">
+          <div>
+            <div className="text-xs text-slate-500 mb-0.5">Redirect URI (Authentication → Platform configurations → Web):</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 font-mono text-xs bg-white px-2 py-1.5 rounded border border-slate-200 break-all">{callbackUrl}</code>
+              <button
+                type="button"
+                onClick={() => { navigator.clipboard.writeText(callbackUrl); }}
+                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs hover:bg-slate-50"
+                title="Copy"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-slate-500 mb-0.5">Login-URL (deze geven aan collega&apos;s):</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 font-mono text-xs bg-white px-2 py-1.5 rounded border border-slate-200 break-all">{loginUrl}</code>
+              <button
+                type="button"
+                onClick={() => { navigator.clipboard.writeText(loginUrl); }}
+                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs hover:bg-slate-50"
+                title="Copy"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+          <div className="text-xs text-slate-500 pt-2">
+            <strong>Supported account types</strong> in de Entra app moet staan op <em>&quot;Accounts in this organizational directory only (single tenant)&quot;</em> voor maximale beveiliging.
+            {isStrict ? (
+              <span className="ml-1 text-emerald-700">✓ Je hebt een specifieke tenant-GUID geconfigureerd.</span>
+            ) : tenantId === "common" ? (
+              <span className="ml-1 text-amber-700">⚠ Tenant staat op &apos;common&apos;: AAD laat élke M365-tenant binnen. Vul jullie tenant-GUID in voor strikte beveiliging.</span>
+            ) : null}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

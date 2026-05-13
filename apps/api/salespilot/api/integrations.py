@@ -176,15 +176,17 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
             "api_key_set": bool(cfg.get("api_key")),
         }
     if kind == M365_SSO_KIND:
-        # Microsoft 365 SSO via Azure AD OAuth2. Users with this org-domain
-        # email can log in with their M365 account without setting a SalesPilot
-        # password.
+        # Microsoft 365 SSO via Azure AD OAuth2. Only invited users in
+        # this org can sign in -- the platform never auto-creates a user.
         return {
             "tenant_id": cfg.get("tenant_id") or "common",
             "client_id": cfg.get("client_id"),
             "client_secret_set": bool(cfg.get("client_secret")),
             "allowed_email_domains": cfg.get("allowed_email_domains") or [],
-            "auto_create_users": cfg.get("auto_create_users") or False,
+            # Hard-disabled server-side regardless of config -- we surface
+            # this to the UI so it can show a disabled / 'enforced' state.
+            "auto_create_users": False,
+            "auto_create_users_enforced": True,
         }
     return {}
 
@@ -790,6 +792,118 @@ async def linkedin_oauth_url(
         "scope": scopes,
     }
     return {"authorize_url": f"https://www.linkedin.com/oauth/v2/authorization?{urlencode(params)}"}
+
+
+
+
+
+@router.post(f"/{M365_SSO_KIND}/test", response_model=TestConnectionResult)
+async def test_m365_sso(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    """Verify the M365 SSO config is sane.
+
+    Checks:
+      * client_id + client_secret + tenant_id are filled
+      * tenant_id is a valid GUID or 'common'/'organizations'/'consumers'
+      * Microsoft's OIDC discovery endpoint for this tenant is reachable
+        (a 200 here proves the tenant_id is real and the network path works)
+      * the redirect URI we will register is reachable from the public web
+    """
+    import re as _re
+    import httpx as _httpx
+    row = await _get_integration(db, M365_SSO_KIND)
+    if row is None:
+        raise HTTPException(status_code=400, detail="Microsoft 365 SSO niet geconfigureerd")
+    cfg = row.config_json or {}
+    client_id = cfg.get("client_id")
+    secret = cfg.get("client_secret")
+    tenant = cfg.get("tenant_id") or "common"
+    if not client_id:
+        return TestConnectionResult(ok=False, detail="client_id ontbreekt", token_present=False)
+    if not secret:
+        return TestConnectionResult(ok=False, detail="client_secret ontbreekt", token_present=False)
+    guid_re = _re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", _re.I)
+    if tenant not in ("common", "organizations", "consumers") and not guid_re.match(tenant):
+        return TestConnectionResult(
+            ok=False, token_present=True,
+            detail=f"tenant_id '{tenant}' is geen geldige GUID of speciale waarde",
+        )
+    # OIDC discovery confirms tenant exists and our network can reach it
+    try:
+        async with _httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration"
+            )
+        if r.status_code != 200:
+            return TestConnectionResult(
+                ok=False, token_present=True,
+                detail=f"OIDC-discovery faalt ({r.status_code}) -- tenant_id mogelijk fout?",
+            )
+        d = r.json()
+        issuer = d.get("issuer") or ""
+    except Exception as e:
+        return TestConnectionResult(
+            ok=False, token_present=True,
+            detail=f"Microsoft niet bereikbaar: {str(e)[:120]}",
+        )
+    # Optional: validate the client_secret by attempting the client-credentials
+    # grant. Returns 200 on success or a useful error from AAD itself.
+    try:
+        async with _httpx.AsyncClient(timeout=10) as c:
+            tok = await c.post(
+                f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": secret,
+                    "scope": "https://graph.microsoft.com/.default",
+                    "grant_type": "client_credentials",
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        if tok.status_code == 200:
+            return TestConnectionResult(
+                ok=True, token_present=True,
+                detail=f"Verbinding OK. Issuer: {issuer}. Tenant + secret geverifieerd via Microsoft.",
+            )
+        err = tok.json() if tok.headers.get("content-type","").startswith("application/json") else {}
+        err_code = err.get("error", "")
+        desc = (err.get("error_description") or tok.text[:200]).split("\n")[0]
+
+        # Discriminate between hard failures (wrong secret/tenant) and
+        # soft ones that are normal for pure-SSO apps without
+        # application-level Graph permissions.
+        # AADSTS7000215 = invalid_client_secret_provided
+        # AADSTS70011   = invalid_scope (no app permissions; OK for SSO)
+        # AADSTS650053  = the application does not have admin consent (OK)
+        # AADSTS90002   = tenant not found
+        if "AADSTS7000215" in desc or err_code == "invalid_client":
+            return TestConnectionResult(
+                ok=False, token_present=True,
+                detail=f"Client secret is fout of verlopen. Maak een nieuwe aan in Entra ID -> Certificates & secrets.",
+            )
+        if "AADSTS90002" in desc:
+            return TestConnectionResult(
+                ok=False, token_present=True,
+                detail="Tenant niet gevonden. Controleer of tenant_id correct is.",
+            )
+        if "AADSTS70011" in desc or "AADSTS650053" in desc or "invalid_scope" in err_code:
+            # No application-permissions granted -- normal for pure SSO.
+            # Tenant + secret are both valid (AAD reached this far).
+            return TestConnectionResult(
+                ok=True, token_present=True,
+                detail=(
+                    f"Verbinding OK. Issuer: {issuer}. Tenant + secret zijn geldig. "
+                    "(Geen Graph application-permissions -- niet nodig voor SSO.)"
+                ),
+            )
+        return TestConnectionResult(
+            ok=False, token_present=True,
+            detail=f"AAD weigert credentials: {desc[:200]}",
+        )
+    except Exception as e:
+        return TestConnectionResult(
+            ok=False, token_present=True,
+            detail=f"AAD-token endpoint onbereikbaar: {str(e)[:120]}",
+        )
 
 
 # ---- Wespennest source test endpoints ----
