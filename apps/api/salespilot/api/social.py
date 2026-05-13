@@ -124,6 +124,7 @@ async def _enrich_post(db: Db, p: SocialPost) -> PostPublic:
 
 
 async def _get_linkedin_token(db: Db) -> str:
+    from salespilot.api.oauth_callbacks import refresh_linkedin_token_if_needed
     integ = (
         await db.execute(
             select(Integration).where(
@@ -137,15 +138,21 @@ async def _get_linkedin_token(db: Db) -> str:
             status_code=400,
             detail=(
                 "LinkedIn is niet geconfigureerd. Ga naar Settings → "
-                "Integrations → LinkedIn en plak een access token."
+                "Integrations → LinkedIn en verbind via OAuth."
             ),
         )
+    # Best-effort refresh -- silent if no refresh_token or not yet expiring
+    try:
+        if await refresh_linkedin_token_if_needed(integ):
+            await db.flush()
+    except Exception:
+        pass
     cfg = integ.config_json or {}
     token = cfg.get("access_token")
     if not token:
         raise HTTPException(
             status_code=400,
-            detail="LinkedIn access_token ontbreekt in de integratie-config.",
+            detail="LinkedIn access_token ontbreekt. Verbind LinkedIn via Settings.",
         )
     return token
 

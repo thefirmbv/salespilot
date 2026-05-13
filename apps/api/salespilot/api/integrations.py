@@ -123,6 +123,12 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
             "organization_urn": cfg.get("organization_urn"),
             "client_secret_set": bool(cfg.get("client_secret")),
             "access_token_set": bool(cfg.get("access_token")),
+            # OAuth status -- frontend uses this to show "Verbonden" badge
+            # + reconnect button. Secrets themselves stay server-only.
+            "connected_via_oauth": bool(cfg.get("connected_via_oauth")),
+            "connected_at": cfg.get("connected_at"),
+            "access_token_expires_at": cfg.get("access_token_expires_at"),
+            "granted_scope": cfg.get("granted_scope"),
         }
     # ---- Wespennest sources ----
     if kind == KVK_KIND:

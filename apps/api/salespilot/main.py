@@ -26,6 +26,7 @@ from salespilot.api.mail_campaigns import router as mail_campaigns_router
 from salespilot.api.wespennest import router as wespennest_router
 from salespilot.api.admin import router as admin_router
 from salespilot.api.auth_m365 import router as auth_m365_router
+from salespilot.api.oauth_callbacks import router as oauth_callbacks_router
 from salespilot.api.social import router as social_router
 from salespilot.api.companies_extra import router as companies_extra_comms_router
 from salespilot.api.branding import router as branding_router, uploads_router as branding_uploads_router
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(wespennest_router, prefix=prefix)
     app.include_router(admin_router, prefix=prefix)
     app.include_router(auth_m365_router, prefix=prefix)
+    app.include_router(oauth_callbacks_router, prefix=prefix)
     app.include_router(social_router, prefix=prefix)
     app.include_router(branding_router, prefix=prefix)
     app.include_router(branding_uploads_router, prefix=prefix)

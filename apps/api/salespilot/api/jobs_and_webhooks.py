@@ -778,3 +778,90 @@ async def wespennest_tick(
 
     return {"ok": True, "runs": len(results), "results": results}
 
+
+@internal_router.post("/social/metrics-refresh")
+async def social_metrics_refresh(
+    x_internal_token: str = Header(default=""),
+) -> dict[str, Any]:
+    """Daily-ish: walk every published social post from the last 30 days
+    and pull a fresh metric snapshot from LinkedIn.
+
+    Authenticated with the same internal token as the autopilot tick.
+    """
+    settings = get_settings()
+    expected = settings.autopilot_internal_token.get_secret_value()
+    if not expected or x_internal_token != expected:
+        raise HTTPException(status_code=401, detail="bad internal token")
+
+    from datetime import timedelta
+    from uuid import uuid4
+    from salespilot.api.social import _get_linkedin_token
+    from salespilot.integrations.linkedin import LinkedInClient
+    from salespilot.models.social import SocialPost, SocialPostMetrics
+
+    refreshed = 0
+    failed = 0
+    skipped = 0
+    cutoff = datetime.now(UTC) - timedelta(days=30)
+
+    async with get_sessionmaker()() as db:
+        orgs = (await db.execute(select(Organization))).scalars().all()
+
+    for org in orgs:
+        async with get_sessionmaker()() as db:
+            await _set_org_context(db, org.id)
+            posts = (
+                await db.execute(
+                    select(SocialPost).where(
+                        SocialPost.status == "published",
+                        SocialPost.published_at.is_not(None),
+                        SocialPost.published_at >= cutoff,
+                    )
+                )
+            ).scalars().all()
+            if not posts:
+                continue
+            try:
+                token = await _get_linkedin_token(db)
+            except Exception:
+                # LinkedIn not configured for this org -- skip silently
+                skipped += len(posts)
+                continue
+
+            now = datetime.now(UTC)
+            async with LinkedInClient(token) as li:
+                for p in posts:
+                    for entry in (p.publish_result or []):
+                        if not isinstance(entry, dict):
+                            continue
+                        ppid = entry.get("platform_post_id")
+                        if not ppid:
+                            continue
+                        try:
+                            stats = await li.get_post_stats(ppid)
+                        except Exception:  # noqa: BLE001
+                            failed += 1
+                            continue
+                        db.add(SocialPostMetrics(
+                            id=uuid4(),
+                            org_id=org.id,
+                            post_id=p.id,
+                            platform_post_id=ppid,
+                            snapshot_at=now,
+                            impressions=int(stats.get("impressions") or 0),
+                            likes=int(stats.get("likes") or 0),
+                            comments=int(stats.get("comments") or 0),
+                            shares=int(stats.get("shares") or 0),
+                            clicks=int(stats.get("clicks") or 0),
+                            raw=stats,
+                        ))
+                        refreshed += 1
+            await db.commit()
+
+    return {
+        "ok": True,
+        "refreshed": refreshed,
+        "failed": failed,
+        "skipped": skipped,
+    }
+

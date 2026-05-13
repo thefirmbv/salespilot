@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 
@@ -90,15 +90,12 @@ const KINDS: Record<string, KindMeta> = {
   },
   linkedin: {
     label: "LinkedIn",
-    description: "Officiele LinkedIn API — nul ban-risico. Voor post-scheduling en outreach task tracking. OAuth-flow volgt zodra je een LinkedIn-app hebt gemaakt.",
-    docsUrl: "https://learn.microsoft.com/en-us/linkedin/marketing/",
+    description: "Officiele LinkedIn API voor post-scheduling en analytics. Eerst je app aanmaken in de LinkedIn Developer console, dan client_id + secret hier invullen, dan de Verbind-knop hieronder.",
+    docsUrl: "https://www.linkedin.com/developers/apps",
     supportsSync: false,
     fields: [
-      { name: "client_id", label: "Client ID", help: "From your LinkedIn Developer app." },
-      { name: "client_secret", label: "Client secret", type: "password", secret: true, help: "Stored encrypted. Leave blank to keep existing." },
-      { name: "person_urn", label: "Person URN (optional)", placeholder: "urn:li:person:XXXX", help: "For posting from your personal profile." },
-      { name: "organization_urn", label: "Organization URN (optional)", placeholder: "urn:li:organization:NNNN", help: "For posting from your company page." },
-      { name: "access_token", label: "Access token (manual until OAuth flow)", type: "password", secret: true, help: "Will be replaced by OAuth flow in a future update." },
+      { name: "client_id", label: "Client ID", required: true, help: "Uit je LinkedIn Developer app (Auth tab)." },
+      { name: "client_secret", label: "Client secret", type: "password", secret: true, required: true, help: "Stored encrypted." },
     ],
   },
 
@@ -191,6 +188,7 @@ export function IntegrationConfigure() {
   const meta = KINDS[kind];
   const qc = useQueryClient();
   const [form, setForm] = useState<Record<string, string>>({});
+  const [searchParams, setSearchParams] = useSearchParams();
   const [enabled, setEnabled] = useState(true);
 
   const integrationQ = useQuery<IntegrationPublic | null>({
@@ -325,6 +323,8 @@ export function IntegrationConfigure() {
           })}
         </div>
 
+        {kind === "linkedin" && <LinkedInOAuthBlock cfg={integrationQ.data?.config_public ?? {}} kind={kind!} searchParams={searchParams} setSearchParams={setSearchParams} />}
+
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <button
             onClick={() => saveMut.mutate()}
@@ -380,6 +380,136 @@ export function IntegrationConfigure() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ===== LinkedIn OAuth section =====
+
+function LinkedInOAuthBlock({
+  cfg, kind, searchParams, setSearchParams,
+}: {
+  cfg: Record<string, unknown>;
+  kind: string;
+  searchParams: URLSearchParams;
+  setSearchParams: (params: URLSearchParams, opts?: { replace?: boolean }) => void;
+}) {
+  const connected = !!cfg.connected_via_oauth;
+  const connectedAt = cfg.connected_at as string | undefined;
+  const expiresAt = cfg.access_token_expires_at as string | undefined;
+  const scope = cfg.granted_scope as string | undefined;
+  const clientIdSet = !!cfg.client_id;
+  const secretSet = !!cfg.client_secret_set;
+
+  const oauthOk = searchParams.get("oauth_ok");
+  const oauthError = searchParams.get("oauth_error");
+
+  // Clear the query params after first render so a reload doesn't keep the banner
+  const dismissBanner = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("oauth_ok");
+    next.delete("oauth_error");
+    setSearchParams(next, { replace: true });
+  };
+
+  const handleConnect = async () => {
+    try {
+      const r = await fetch(`/api/v1/integrations/${kind}/oauth-url`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` },
+      });
+      const data = await r.json();
+      if (data.authorize_url) {
+        window.location.href = data.authorize_url;
+      } else {
+        alert("Geen OAuth URL kunnen genereren. Eerst Client ID + Secret opslaan.");
+      }
+    } catch (e) {
+      alert("OAuth start mislukte: " + (e instanceof Error ? e.message : "onbekend"));
+    }
+  };
+
+  let expiryText: string | null = null;
+  let expiryTone: "default" | "warning" | "danger" = "default";
+  if (expiresAt) {
+    const expDate = new Date(expiresAt);
+    const daysLeft = Math.round((expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    if (daysLeft < 0) {
+      expiryText = `Token is verlopen (${-daysLeft} dagen geleden)`;
+      expiryTone = "danger";
+    } else if (daysLeft < 7) {
+      expiryText = `Token verloopt over ${daysLeft} dagen`;
+      expiryTone = "warning";
+    } else {
+      expiryText = `Geldig tot ${expDate.toLocaleDateString("nl-NL")} (${daysLeft} dagen)`;
+    }
+  }
+
+  return (
+    <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4 space-y-2">
+      <div className="text-[11px] uppercase tracking-wider text-slate-500">OAuth verbinding</div>
+
+      {oauthOk && (
+        <div className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 flex items-start justify-between gap-2">
+          <span>✅ Verbonden met LinkedIn. Je kunt nu posten + destinations ophalen.</span>
+          <button onClick={dismissBanner} className="text-emerald-700 hover:text-emerald-900">×</button>
+        </div>
+      )}
+      {oauthError && (
+        <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 flex items-start justify-between gap-2">
+          <span>❌ OAuth mislukt: <code className="font-mono text-xs">{oauthError}</code></span>
+          <button onClick={dismissBanner} className="text-red-700 hover:text-red-900">×</button>
+        </div>
+      )}
+
+      {!clientIdSet || !secretSet ? (
+        <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Vul eerst <strong>Client ID</strong> + <strong>Client secret</strong> hierboven in en klik op <strong>Save</strong>. Daarna kun je hier verbinden.
+        </div>
+      ) : !connected ? (
+        <div className="space-y-2">
+          <div className="text-sm text-slate-700">
+            Nog niet verbonden. Klik op de knop om naar LinkedIn te gaan voor authorizatie.
+          </div>
+          <div className="text-[11px] text-slate-500">
+            Belangrijk: in de LinkedIn Developer console moet onder <strong>Auth → Authorized redirect URLs</strong> deze URL staan:<br/>
+            <code className="font-mono text-[11px] block mt-1 rounded bg-white px-2 py-1">https://sales.hostingportal.org/api/v1/oauth/linkedin/callback</code>
+          </div>
+          <button
+            type="button"
+            onClick={handleConnect}
+            className="rounded-md bg-[#0A66C2] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#0856A6]"
+          >
+            🔗 Verbinden met LinkedIn
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+            <span className="font-medium text-emerald-800">Verbonden</span>
+            {connectedAt && (
+              <span className="text-slate-500 text-xs">sinds {new Date(connectedAt).toLocaleDateString("nl-NL")}</span>
+            )}
+          </div>
+          {expiryText && (
+            <div className={`text-xs ${
+              expiryTone === "danger" ? "text-red-700" :
+              expiryTone === "warning" ? "text-amber-700" :
+              "text-slate-600"
+            }`}>
+              {expiryText}
+            </div>
+          )}
+          {scope && <div className="text-[11px] text-slate-500">Scope: <code className="font-mono">{scope}</code></div>}
+          <button
+            type="button"
+            onClick={handleConnect}
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+          >
+            Opnieuw verbinden
+          </button>
+        </div>
+      )}
     </div>
   );
 }

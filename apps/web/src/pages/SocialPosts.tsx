@@ -2,6 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 type Destination = {
   platform: "linkedin";
@@ -604,6 +613,8 @@ export function SocialPostEditor() {
                 </button>
               </div>
             )}
+            {post?.status === "published" && <PostAnalyticsPanel postId={post.id} />}
+
             {post?.publish_result && post.publish_result.length > 0 && (
               <div className="rounded-md border border-slate-200 bg-white p-3 space-y-2">
                 <div className="text-[11px] uppercase tracking-wider text-slate-500">Publicatie resultaat</div>
@@ -671,6 +682,158 @@ function LinkedInPreview({
         <button className="py-2 hover:bg-slate-50">\ud83d\udd01 Repost</button>
         <button className="py-2 hover:bg-slate-50">\ud83d\udce4 Verstuur</button>
       </div>
+    </div>
+  );
+}
+
+// ===== Per-post analytics panel =====
+
+type MetricSnapshot = {
+  snapshot_at: string;
+  platform_post_id: string;
+  impressions: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  clicks: number;
+  engagement_rate: number | null;
+};
+
+function PostAnalyticsPanel({ postId }: { postId: string }) {
+  const qc = useQueryClient();
+  const snapshotsQ = useQuery<MetricSnapshot[]>({
+    queryKey: ["/social/posts/metrics", postId],
+    queryFn: () => api<MetricSnapshot[]>(`/social/posts/${postId}/metrics`),
+  });
+
+  const refreshMut = useMutation({
+    mutationFn: () => api<{ ok: boolean; snapshots_added: number }>(
+      `/social/posts/${postId}/metrics/refresh`,
+      { method: "POST" }
+    ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/social/posts/metrics", postId] });
+    },
+  });
+
+  const snapshots = snapshotsQ.data ?? [];
+
+  // Aggregate across all destinations for the same snapshot_at
+  type AggPoint = {
+    snapshot_at: string;
+    impressions: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    clicks: number;
+  };
+  const byTime = new Map<string, AggPoint>();
+  for (const s of snapshots) {
+    const key = s.snapshot_at;
+    const existing = byTime.get(key);
+    if (existing) {
+      existing.impressions += s.impressions;
+      existing.likes += s.likes;
+      existing.comments += s.comments;
+      existing.shares += s.shares;
+      existing.clicks += s.clicks;
+    } else {
+      byTime.set(key, {
+        snapshot_at: key,
+        impressions: s.impressions,
+        likes: s.likes,
+        comments: s.comments,
+        shares: s.shares,
+        clicks: s.clicks,
+      });
+    }
+  }
+  const chartData = Array.from(byTime.values()).map((p) => ({
+    ...p,
+    label: new Date(p.snapshot_at).toLocaleDateString("nl-NL", { day: "numeric", month: "short" }),
+    engagements: p.likes + p.comments + p.shares + p.clicks,
+  }));
+
+  // Latest totals across destinations
+  const totals = chartData.length > 0 ? chartData[chartData.length - 1] : {
+    impressions: 0, likes: 0, comments: 0, shares: 0, clicks: 0, engagements: 0,
+  };
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] uppercase tracking-wider text-slate-500">Analytics</div>
+        <button
+          type="button"
+          onClick={() => refreshMut.mutate()}
+          disabled={refreshMut.isPending}
+          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
+        >
+          {refreshMut.isPending ? "Bezig…" : "↻ Ververs"}
+        </button>
+      </div>
+
+      {snapshotsQ.isLoading && <div className="text-xs text-slate-500">Bezig met laden…</div>}
+
+      {snapshots.length === 0 && !snapshotsQ.isLoading && (
+        <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Nog geen metrics-snapshot. Klik op <strong>↻ Ververs</strong> om de eerste op te halen.
+          LinkedIn levert impressions alleen aan apps met Marketing Developer Platform-toegang;
+          likes + comments werken altijd.
+        </div>
+      )}
+
+      {snapshots.length > 0 && (
+        <>
+          <div className="grid grid-cols-3 gap-2 md:grid-cols-5 text-xs">
+            <MetricCard label="Likes" value={totals.likes} />
+            <MetricCard label="Comments" value={totals.comments} />
+            <MetricCard label="Shares" value={totals.shares} />
+            <MetricCard label="Clicks" value={totals.clicks} />
+            <MetricCard label="Impressions" value={totals.impressions} />
+          </div>
+
+          {chartData.length >= 2 && (
+            <div className="h-48 -mx-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="engagements" stroke="#10b981" strokeWidth={2} dot={false} name="Engagement" />
+                  {totals.impressions > 0 && (
+                    <Line type="monotone" dataKey="impressions" stroke="#3b82f6" strokeWidth={1.5} dot={false} name="Impressions" />
+                  )}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          <details className="text-xs">
+            <summary className="cursor-pointer text-slate-500 hover:text-slate-800">
+              {snapshots.length} snapshot{snapshots.length === 1 ? "" : "s"} — bekijk lijst
+            </summary>
+            <ul className="mt-1 max-h-32 overflow-y-auto divide-y divide-slate-100">
+              {snapshots.slice().reverse().map((s, i) => (
+                <li key={i} className="py-1 tabular-nums text-[11px] text-slate-600 flex justify-between">
+                  <span>{new Date(s.snapshot_at).toLocaleString("nl-NL")}</span>
+                  <span>{s.likes}L · {s.comments}C · {s.shares}S{s.impressions > 0 && ` · ${s.impressions}I`}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
+      <div className="text-[9px] uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="text-base font-medium tabular-nums">{value.toLocaleString("nl-NL")}</div>
     </div>
   );
 }
