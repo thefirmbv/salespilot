@@ -107,11 +107,45 @@ class OpenKvkClient:
             return SourceTestResult(ok=False, detail=f"OpenKVK gaf status {r.status_code}: {r.text[:120]}")
 
     async def lookup_by_kvk(self, kvk_number: str) -> CompanyResult | None:
+        """Lookup a single company by KvK (dossier) number.
+
+        OpenKVK's free tier doesn't expose /openkvk/{nummer} directly;
+        instead we search via queryFields[dossiernummer]=N and follow the
+        slug-href in the first hit's _links.self.href to fetch detail.
+        Even then, the free tier only returns dossiernummer + handelsnaam
+        + subtype -- not adresgegevens. So callers should not expect
+        street/postcode/city to be populated from this client.
+        """
         async with httpx.AsyncClient(timeout=15.0) as c:
-            r = await c.get(f"{self.base_url}/{kvk_number}", headers=self._headers())
-            if r.status_code == 404 or not r.is_success:
+            r = await c.get(
+                self.base_url,
+                params={"queryFields[dossiernummer]": kvk_number, "size": "1"},
+                headers=self._headers(),
+            )
+            if not r.is_success:
                 return None
-            return self._to_company(r.json())
+            data = r.json() or {}
+            embedded = data.get("_embedded") or {}
+            items = embedded.get("bedrijf") or embedded.get("rechtspersoon") or []
+            for hit in items:
+                if str(hit.get("dossiernummer")) != str(kvk_number):
+                    continue
+                # Try to enrich via the slug href; OpenKVK free tier still
+                # gives the same minimal subset, but this is the canonical
+                # way and harmless when paid-tier is later enabled.
+                href = ((hit.get("_links") or {}).get("self") or {}).get("href")
+                if href:
+                    try:
+                        d = await c.get(
+                            f"https://api.overheid.io{href}",
+                            headers=self._headers(),
+                        )
+                        if d.is_success:
+                            return self._to_company(d.json())
+                    except httpx.HTTPError:
+                        pass
+                return self._to_company(hit)
+            return None
 
     async def search(self, query: str, city: str | None = None, size: int = 20) -> list[CompanyResult]:
         params: dict[str, str] = {"size": str(size)}
@@ -124,7 +158,10 @@ class OpenKvkClient:
             if not r.is_success:
                 return []
             data = r.json() or {}
-            items = (data.get("_embedded") or {}).get("rechtspersoon", []) or []
+            embedded = data.get("_embedded") or {}
+            # Gratis tier returns under "bedrijf"; paid/official tier
+            # historically used "rechtspersoon".
+            items = embedded.get("bedrijf") or embedded.get("rechtspersoon") or []
             return [self._to_company(x) for x in items if isinstance(x, dict)]
 
     async def list_functionarissen(self, kvk_number: str) -> list[FunctionarisResult]:

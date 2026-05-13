@@ -35,6 +35,8 @@ dependencies = [
     # Misc
     "python-multipart>=0.0.20",
     "structlog>=25.1",
+    "reportlab>=4.2",   # SEPA mandate PDF generation
+    "pillow>=10.4",     # signature PNG handling for reportlab
 ]
 
 [project.optional-dependencies]

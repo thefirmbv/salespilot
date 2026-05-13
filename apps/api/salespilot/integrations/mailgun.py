@@ -85,6 +85,8 @@ class MailgunClient:
         references: str | None = None,
         tags: list[str] | None = None,
         custom_vars: dict[str, str] | None = None,
+        attachments: list[tuple[str, bytes, str]] | None = None,
+        # attachments: list of (filename, content_bytes, content_type)
     ) -> dict[str, Any]:
         """Send via Mailgun's /messages endpoint.
 
@@ -92,30 +94,41 @@ class MailgunClient:
         (Mailgun returns it without angle brackets in this format).
         """
         url = f"{self.base}/v3/{self.creds.domain}/messages"
-        data: list[tuple[str, str]] = [
-            ("from", from_full),
-            ("to", to),
-            ("subject", subject),
-            ("text", body_text),
-        ]
+        # Use a dict (with list-values for multi-value keys like o:tag)
+        # because httpx's AsyncClient + multipart files refuses a
+        # list-of-tuples `data` payload (known upstream limitation).
+        data: dict[str, Any] = {
+            "from": from_full,
+            "to": to,
+            "subject": subject,
+            "text": body_text,
+        }
         if body_html:
-            data.append(("html", body_html))
+            data["html"] = body_html
         if reply_to:
-            data.append(("h:Reply-To", reply_to))
+            data["h:Reply-To"] = reply_to
         if in_reply_to:
-            data.append(("h:In-Reply-To", f"<{in_reply_to}>"))
+            data["h:In-Reply-To"] = f"<{in_reply_to}>"
         if references:
-            data.append(("h:References", f"<{references}>"))
+            data["h:References"] = f"<{references}>"
         # Tracking on; click-tracking off for cold mail (less spammy).
-        data.append(("o:tracking", "yes"))
-        data.append(("o:tracking-opens", "yes"))
-        data.append(("o:tracking-clicks", "no"))
-        for tag in tags or []:
-            data.append(("o:tag", tag))
+        data["o:tracking"] = "yes"
+        data["o:tracking-opens"] = "yes"
+        data["o:tracking-clicks"] = "no"
+        if tags:
+            data["o:tag"] = list(tags)
         for k, v in (custom_vars or {}).items():
-            data.append((f"v:{k}", v))
+            data[f"v:{k}"] = v
+        files: list[tuple[str, tuple[str, bytes, str]]] | None = None
+        if attachments:
+            files = []
+            for filename, content, content_type in attachments:
+                files.append(("attachment", (filename, content, content_type)))
         try:
-            res = await self._client.post(url, data=data)
+            if files:
+                res = await self._client.post(url, data=data, files=files)
+            else:
+                res = await self._client.post(url, data=data)
         except httpx.HTTPError as e:
             raise MailgunError(f"network error: {e}") from e
         if res.status_code >= 400:

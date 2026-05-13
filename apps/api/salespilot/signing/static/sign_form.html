@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#128ece">
+  <meta name="robots" content="noindex, nofollow">
+  <title>SEPA-incassomandaat ondertekenen — IT-gemak B.V.</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>✍️</text></svg>">
+  <style>
+    :root {
+      --brand: #128ece;
+      --brand-dark: #0a6ea0;
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --error: #dc2626;
+      --error-bg: #fef2f2;
+      --success: #059669;
+      --success-bg: #ecfdf5;
+      --warn: #d97706;
+      --warn-bg: #fffbeb;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); -webkit-text-size-adjust: 100%; }
+    body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); min-height: 100vh; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 16px; }
+    header { display: flex; align-items: center; gap: 12px; padding: 12px 0 18px; }
+    header .logo { width: 38px; height: 38px; border-radius: 8px; background: var(--brand); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; }
+    header h1 { font-size: 18px; margin: 0; line-height: 1.2; font-weight: 600; }
+    header .sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+    .card { background: var(--card); border-radius: 12px; padding: 18px; margin-bottom: 14px; border: 1px solid var(--border); }
+    .card h2 { font-size: 15px; margin: 0 0 4px; font-weight: 700; }
+    .card .h2-sub { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; margin: 12px 0 6px; }
+    label.req::after { content: ' *'; color: var(--error); }
+    input[type="text"], input[type="email"], input[type="tel"], select, textarea {
+      width: 100%; padding: 11px 12px; font-size: 16px;
+      border: 1px solid var(--border); border-radius: 8px; background: #fff;
+      color: var(--text); -webkit-appearance: none; appearance: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(18, 142, 206, 0.15); }
+    input[readonly] { background: #f1f5f9; color: var(--muted); }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .row-3 { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+    @media (max-width: 480px) {
+      .row, .row-3 { grid-template-columns: 1fr; }
+    }
+    .help { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .help.error { color: var(--error); font-weight: 600; }
+    .button {
+      width: 100%; padding: 14px; border-radius: 10px; border: 0; background: var(--brand);
+      color: #fff; font-size: 16px; font-weight: 600; cursor: pointer;
+      transition: background 0.15s; -webkit-tap-highlight-color: transparent;
+    }
+    .button:hover { background: var(--brand-dark); }
+    .button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .button.secondary { background: transparent; color: var(--brand); border: 1.5px solid var(--brand); }
+    .button.secondary:hover { background: rgba(18, 142, 206, 0.05); }
+    .checkbox-row { display: flex; align-items: flex-start; gap: 10px; margin: 10px 0; padding: 10px; background: #f8fafc; border-radius: 8px; }
+    .checkbox-row input[type="checkbox"] { margin-top: 2px; width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--brand); }
+    .checkbox-row label { margin: 0; text-transform: none; font-size: 13px; color: var(--text); font-weight: 400; letter-spacing: 0; line-height: 1.4; cursor: pointer; }
+    .voorwaarden { font-size: 12px; line-height: 1.55; color: var(--muted); max-height: 200px; overflow-y: auto; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; -webkit-overflow-scrolling: touch; }
+    .voorwaarden p { margin: 0 0 8px; }
+    .voorwaarden strong { color: var(--text); }
+    .sig-canvas { width: 100%; height: 180px; background: #fff; border: 2px dashed #cbd5e1; border-radius: 8px; touch-action: none; display: block; cursor: crosshair; }
+    .sig-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; gap: 8px; }
+    .sig-clear { font-size: 12px; color: var(--muted); background: transparent; border: 0; cursor: pointer; padding: 6px 10px; text-decoration: underline; }
+    .banner { padding: 12px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; line-height: 1.4; }
+    .banner.error { background: var(--error-bg); color: var(--error); border: 1px solid #fecaca; }
+    .banner.success { background: var(--success-bg); color: var(--success); border: 1px solid #a7f3d0; }
+    .banner.warn { background: var(--warn-bg); color: var(--warn); border: 1px solid #fde68a; }
+    .banner.info { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .kvk-row { display: flex; gap: 6px; align-items: stretch; }
+    .kvk-row input { flex: 1; }
+    .kvk-row button { padding: 0 14px; font-size: 13px; }
+    .footer-note { font-size: 11px; color: var(--muted); text-align: center; padding: 16px 0; line-height: 1.5; }
+    .footer-note a { color: var(--brand); }
+    .honeypot { position: absolute; left: -9999px; opacity: 0; pointer-events: none; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .success-screen { text-align: center; padding: 40px 20px; }
+    .success-screen .check { width: 64px; height: 64px; border-radius: 50%; background: var(--success-bg); color: var(--success); display: inline-flex; align-items: center; justify-content: center; font-size: 32px; margin-bottom: 16px; }
+    .success-screen h2 { font-size: 22px; margin: 0 0 8px; }
+    .success-screen p { color: var(--muted); margin: 4px 0; }
+    .success-screen .umr { font-family: ui-monospace, "SF Mono", monospace; font-weight: 700; color: var(--text); background: #f1f5f9; padding: 4px 10px; border-radius: 6px; display: inline-block; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo">IT</div>
+      <div>
+        <h1>SEPA-incassomandaat</h1>
+        <div class="sub">IT-gemak B.V. · digitaal ondertekenen</div>
+      </div>
+    </header>
+
+    <div id="form-container">
+
+      <div class="card">
+        <h2>Wat ga je tekenen?</h2>
+        <div class="h2-sub">Met dit mandaat geef je IT-gemak B.V. toestemming om bedragen te incasseren via SEPA voor diensten, abonnementen en werkzaamheden tot €10.000 per incasso. Je kunt het op elk moment herroepen.</div>
+        <details>
+          <summary style="cursor: pointer; font-size: 13px; color: var(--brand); user-select: none;">📄 Bekijk volledige voorwaarden</summary>
+          <div class="voorwaarden" style="margin-top: 10px;">
+            <p><strong>1. Toestemming.</strong> Door ondertekening geeft u toestemming aan IT-gemak B.V. om via Mollie bedragen van uw rekening te incasseren voor diensten, abonnementen, materialen en werkzaamheden die u afneemt, tot een maximaal bedrag van €10.000 per incasso. De incasso vindt plaats na de factuurdatum.</p>
+            <p><strong>2. Kosten bij stornering.</strong> Bij stornering of onterechte incasso worden kosten van €65,- excl. BTW doorberekend. Stornering melden via administratie@it-gemak.nl, doorgaans binnen 2 werkdagen verwerkt.</p>
+            <p><strong>3. Incassoprocedure.</strong> Incasso start 7 dagen na factuurdatum. Variabele bedragen, afhankelijk van afgenomen diensten/materialen, max €10.000 per transactie.</p>
+            <p><strong>4. Herroepingsrecht.</strong> U kunt het mandaat op elk moment herroepen via administratie@it-gemak.nl. Geldt vanaf eerstvolgende geplande incasso na verwerking.</p>
+            <p><strong>5. Duur.</strong> Onbeperkte tijd, tenzij schriftelijk herroepen.</p>
+            <p><strong>6. Beëindiging.</strong> Mandaat blijft van kracht tot schriftelijke intrekking of bij beëindiging overeenkomst.</p>
+            <p><strong>7. Vragen.</strong> Contact via administratie@it-gemak.nl.</p>
+            <p><strong>8. Algemene voorwaarden IT-gemak B.V.</strong> van toepassing op alle diensten. Algemene voorwaarden van de klant worden nadrukkelijk van de hand gewezen.</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="card">
+        <h2>Uw gegevens (debiteur)</h2>
+        <div class="h2-sub">Vul de gegevens in van de partij waarvan geïncasseerd mag worden.</div>
+
+        <label class="req" for="kvk">KvK-nummer (zakelijke debiteur, optioneel)</label>
+        <div class="kvk-row">
+          <input type="text" id="kvk" inputmode="numeric" pattern="[0-9]*" placeholder="bv. 12345678" maxlength="8">
+          <button type="button" class="button secondary" id="kvk-lookup-btn" style="width: auto;">Ophalen</button>
+        </div>
+        <div class="help" id="kvk-help">Hiermee halen we automatisch uw bedrijfsgegevens op bij de Kamer van Koophandel.</div>
+
+        <label class="req" for="debtor_name">Bedrijfsnaam / volledige naam</label>
+        <input type="text" id="debtor_name" autocomplete="organization" required maxlength="200">
+
+        <label class="req" for="debtor_address">Adres</label>
+        <input type="text" id="debtor_address" autocomplete="street-address" required maxlength="255" placeholder="Straat + huisnummer">
+
+        <div class="row-3">
+          <div>
+            <label class="req" for="debtor_postcode">Postcode</label>
+            <input type="text" id="debtor_postcode" autocomplete="postal-code" required maxlength="20" placeholder="1234 AB">
+          </div>
+          <div>
+            <label class="req" for="debtor_city">Plaats</label>
+            <input type="text" id="debtor_city" autocomplete="address-level2" required maxlength="120">
+          </div>
+        </div>
+
+        <label for="debtor_country">Land</label>
+        <input type="text" id="debtor_country" autocomplete="country-name" maxlength="80" value="Nederland">
+      </div>
+
+      <div class="card">
+        <h2>Bankgegevens</h2>
+        <div class="h2-sub">De rekening waarvan IT-gemak mag incasseren.</div>
+
+        <label class="req" for="debtor_iban">IBAN-nummer</label>
+        <input type="text" id="debtor_iban" autocomplete="off" required maxlength="34" placeholder="NL00 BANK 0000 0000 00" style="font-family: ui-monospace, monospace;">
+        <div class="help" id="iban-help">We controleren het IBAN automatisch.</div>
+
+        <label for="debtor_bic">BIC-code (optioneel)</label>
+        <input type="text" id="debtor_bic" maxlength="11" placeholder="bv. INGBNL2A" style="font-family: ui-monospace, monospace;">
+      </div>
+
+      <div class="card">
+        <h2>Contact</h2>
+        <div class="h2-sub">Voor de bevestiging + eventuele vragen over de incasso.</div>
+
+        <label class="req" for="debtor_email">E-mailadres</label>
+        <input type="email" id="debtor_email" autocomplete="email" required maxlength="255" inputmode="email">
+        <div class="help">U ontvangt zo dadelijk een kopie van het ondertekende mandaat per e-mail.</div>
+
+        <label for="debtor_phone">Telefoonnummer (optioneel)</label>
+        <input type="tel" id="debtor_phone" autocomplete="tel" maxlength="40">
+      </div>
+
+      <div class="card">
+        <h2>Ondertekening</h2>
+        <div class="h2-sub">Zet uw handtekening met uw vinger (mobiel) of muis (desktop).</div>
+
+        <label class="req" for="sign_place">Plaats van ondertekening</label>
+        <input type="text" id="sign_place" required maxlength="120" placeholder="bv. Amsterdam">
+
+        <label class="req" style="margin-top: 16px;">Handtekening</label>
+        <canvas class="sig-canvas" id="sig" width="600" height="180"></canvas>
+        <div class="sig-row">
+          <span class="help" id="sig-status">Nog niet ondertekend</span>
+          <button type="button" class="sig-clear" id="sig-clear">↺ Opnieuw</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="checkbox-row">
+          <input type="checkbox" id="accept_terms" required>
+          <label for="accept_terms">Ik heb de <strong>mandaatvoorwaarden</strong> gelezen en ga akkoord. Ik machtig IT-gemak B.V. om bedragen via SEPA-incasso van mijn rekening af te schrijven, tot max. €10.000 per incasso.</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="accept_audit" required>
+          <label for="accept_audit">Ik ga akkoord met de <strong>digitale ondertekening</strong> en weet dat mijn IP-adres, geo-locatie (bij benadering) en tijdstempel worden vastgelegd als bewijs.</label>
+        </div>
+
+        <div id="form-banner"></div>
+
+        <button type="button" class="button" id="submit-btn">Mandaat ondertekenen en versturen</button>
+
+        <!-- Honeypot -->
+        <input type="text" class="honeypot" id="company_website" tabindex="-1" autocomplete="off" aria-hidden="true">
+      </div>
+
+      <div class="footer-note">
+        IT-gemak B.V. · Broekdijk West 19U · 3621LV Breukelen<br>
+        030 - 737 0836 · <a href="mailto:administratie@it-gemak.nl">administratie@it-gemak.nl</a><br>
+        Crediteur-ID NL08ZZZ860431020000
+      </div>
+    </div>
+
+    <div id="success-container" style="display: none;">
+      <div class="card success-screen">
+        <div class="check">✓</div>
+        <h2>Bedankt!</h2>
+        <p>Uw SEPA-incassomandaat is ontvangen en getekend.</p>
+        <p style="margin-top: 16px;">Mandaatreferentie:<br><span class="umr" id="success-umr"></span></p>
+        <p style="margin-top: 16px; font-size: 13px;">We hebben een kopie van het document naar uw e-mailadres gestuurd. Bewaar deze goed.</p>
+        <p style="margin-top: 24px; font-size: 12px; color: var(--muted);">U kunt dit venster nu sluiten.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  // ===== Signature canvas =====
+  const canvas = document.getElementById("sig");
+  const ctx = canvas.getContext("2d");
+  let drawing = false, signed = false, lastX = 0, lastY = 0;
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = 180 * dpr;
+    canvas.style.height = "180px";
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#0f172a";
+  }
+  resizeCanvas();
+  window.addEventListener("resize", resizeCanvas);
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches && e.touches[0]) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function startDraw(e) {
+    e.preventDefault();
+    drawing = true;
+    const p = getPos(e);
+    lastX = p.x; lastY = p.y;
+  }
+  function draw(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    const p = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    lastX = p.x; lastY = p.y;
+    signed = true;
+    document.getElementById("sig-status").textContent = "✓ Ondertekend";
+    document.getElementById("sig-status").style.color = "var(--success)";
+  }
+  function endDraw() { drawing = false; }
+
+  canvas.addEventListener("mousedown", startDraw);
+  canvas.addEventListener("mousemove", draw);
+  canvas.addEventListener("mouseup", endDraw);
+  canvas.addEventListener("mouseleave", endDraw);
+  canvas.addEventListener("touchstart", startDraw, { passive: false });
+  canvas.addEventListener("touchmove", draw, { passive: false });
+  canvas.addEventListener("touchend", endDraw);
+
+  document.getElementById("sig-clear").addEventListener("click", () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    signed = false;
+    document.getElementById("sig-status").textContent = "Nog niet ondertekend";
+    document.getElementById("sig-status").style.color = "var(--muted)";
+  });
+
+  // ===== KvK lookup =====
+  document.getElementById("kvk-lookup-btn").addEventListener("click", async () => {
+    const kvk = document.getElementById("kvk").value.replace(/\D/g, "");
+    const help = document.getElementById("kvk-help");
+    if (!kvk || kvk.length < 7) {
+      help.textContent = "Vul een KvK-nummer van minimaal 7 cijfers in.";
+      help.className = "help error";
+      return;
+    }
+    help.textContent = "Bezig met opzoeken…";
+    help.className = "help";
+    try {
+      const r = await fetch("/sign/api/kvk-lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kvk_number: kvk }),
+      });
+      const data = await r.json();
+      if (data.found) {
+        let filled = 0;
+        if (data.name) { document.getElementById("debtor_name").value = data.name; filled++; }
+        if (data.address) { document.getElementById("debtor_address").value = data.address; filled++; }
+        if (data.postcode) { document.getElementById("debtor_postcode").value = data.postcode; filled++; }
+        if (data.city) { document.getElementById("debtor_city").value = data.city; filled++; }
+        if (data.country) document.getElementById("debtor_country").value = data.country;
+        if (filled >= 3) {
+          help.textContent = "✓ Volledige bedrijfsgegevens opgehaald uit KvK — controleer en pas aan indien nodig.";
+        } else {
+          help.textContent = "✓ Bedrijfsnaam gevonden in KvK. Vul adresgegevens hieronder zelf in.";
+        }
+        help.className = "help";
+        help.style.color = "var(--success)";
+      } else if (data.reason === "kvk_not_configured") {
+        help.textContent = "KvK-koppeling is niet actief. Vul de gegevens handmatig in.";
+        help.className = "help error";
+      } else {
+        help.textContent = "KvK-nummer niet gevonden. Vul de gegevens handmatig in.";
+        help.className = "help error";
+      }
+    } catch (e) {
+      help.textContent = "Kon KvK niet bereiken. Vul de gegevens handmatig in.";
+      help.className = "help error";
+    }
+  });
+
+  // ===== IBAN validation (on blur) =====
+  const ibanInput = document.getElementById("debtor_iban");
+  ibanInput.addEventListener("blur", async () => {
+    const iban = ibanInput.value.trim();
+    const help = document.getElementById("iban-help");
+    if (!iban) { help.textContent = "We controleren het IBAN automatisch."; help.className = "help"; return; }
+    try {
+      const r = await fetch("/sign/api/iban-validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ iban: iban }),
+      });
+      const data = await r.json();
+      if (data.valid) {
+        ibanInput.value = data.normalized.replace(/(.{4})/g, "$1 ").trim();
+        help.textContent = "✓ Geldig IBAN-nummer";
+        help.className = "help";
+        help.style.color = "var(--success)";
+      } else {
+        help.textContent = "Ongeldig IBAN-nummer. Controleer de invoer.";
+        help.className = "help error";
+      }
+    } catch {}
+  });
+
+  // ===== Submit =====
+  const submitBtn = document.getElementById("submit-btn");
+  const banner = document.getElementById("form-banner");
+
+  function showBanner(text, type) {
+    banner.innerHTML = '<div class="banner ' + type + '">' + text + '</div>';
+  }
+
+  function validateAll() {
+    const required = ["debtor_name","debtor_address","debtor_postcode","debtor_city","debtor_iban","debtor_email","sign_place"];
+    for (const id of required) {
+      const el = document.getElementById(id);
+      if (!el.value.trim()) {
+        el.focus(); el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return `Vul "${el.previousElementSibling.textContent.replace(' *','')}" in.`;
+      }
+    }
+    if (!document.getElementById("accept_terms").checked) return "U moet akkoord gaan met de mandaatvoorwaarden.";
+    if (!document.getElementById("accept_audit").checked) return "U moet akkoord gaan met de digitale ondertekening.";
+    if (!signed) {
+      document.getElementById("sig").scrollIntoView({ behavior: "smooth", block: "center" });
+      return "Plaats uw handtekening hierboven.";
+    }
+    return null;
+  }
+
+  submitBtn.addEventListener("click", async () => {
+    banner.innerHTML = "";
+    const err = validateAll();
+    if (err) { showBanner(err, "error"); return; }
+
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner"></span> Bezig met versturen…';
+    showBanner("Bezig met versturen…", "info");
+
+    const payload = {
+      debtor_name: document.getElementById("debtor_name").value.trim(),
+      debtor_address: document.getElementById("debtor_address").value.trim(),
+      debtor_postcode: document.getElementById("debtor_postcode").value.trim(),
+      debtor_city: document.getElementById("debtor_city").value.trim(),
+      debtor_country: document.getElementById("debtor_country").value.trim() || "Nederland",
+      debtor_iban: document.getElementById("debtor_iban").value.trim(),
+      debtor_bic: document.getElementById("debtor_bic").value.trim() || null,
+      debtor_email: document.getElementById("debtor_email").value.trim(),
+      debtor_phone: document.getElementById("debtor_phone").value.trim() || null,
+      debtor_kvk: document.getElementById("kvk").value.replace(/\D/g, "") || null,
+      sign_place: document.getElementById("sign_place").value.trim(),
+      signature_png_base64: canvas.toDataURL("image/png"),
+      company_website: document.getElementById("company_website").value,
+      accept_terms: document.getElementById("accept_terms").checked,
+      accept_audit: document.getElementById("accept_audit").checked,
+    };
+
+    try {
+      const r = await fetch("/sign/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const msg = data?.detail?.[0]?.msg || data?.detail || "Versturen mislukt.";
+        throw new Error(msg);
+      }
+      // Success: swap to success-screen
+      document.getElementById("success-umr").textContent = data.umr;
+      document.getElementById("form-container").style.display = "none";
+      document.getElementById("success-container").style.display = "block";
+      window.scrollTo(0, 0);
+    } catch (e) {
+      showBanner("❌ " + (e.message || "Versturen mislukt. Probeer het opnieuw."), "error");
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = "Mandaat ondertekenen en versturen";
+    }
+  });
+
+  </script>
+</body>
+</html>
