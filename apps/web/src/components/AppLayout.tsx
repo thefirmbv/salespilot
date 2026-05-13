@@ -242,14 +242,14 @@ export function AppLayout() {
   ];
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      {/* Mobile top-bar (alleen <md). Bevat hamburger + logo. */}
+    <>
+      {/* Mobile top-bar (alleen <md). Bevat hamburger + logo. Volle breedte. */}
       <div className="md:hidden sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2 shadow-sm">
         <button
           type="button"
           onClick={() => setMobileMenuOpen(true)}
           aria-label="Open menu"
-          className="inline-flex h-11 w-11 items-center justify-center rounded-md text-slate-700 hover:bg-slate-100"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-md text-slate-700 hover:bg-slate-100 active:bg-slate-200"
         >
           <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
@@ -263,10 +263,11 @@ export function AppLayout() {
         <div className="w-11"></div>
       </div>
 
-      {/* Backdrop (alleen wanneer mobile menu open) */}
+      <div className="flex min-h-screen bg-slate-50">
+      {/* Backdrop (alleen op mobile, alleen als menu open). Klik = sluiten. */}
       {mobileMenuOpen && (
         <div
-          className="md:hidden fixed inset-0 z-40 bg-slate-900/40 transition-opacity"
+          className="md:hidden fixed inset-0 z-40 bg-slate-900/50"
           onClick={() => setMobileMenuOpen(false)}
           aria-hidden="true"
         />
@@ -274,11 +275,12 @@ export function AppLayout() {
 
       <aside
         className={
-          // Desktop: sticky permanent. Mobile: off-canvas met slide-in.
-          `w-64 md:w-60 border-r border-slate-200 bg-white flex flex-col ` +
-          `md:sticky md:top-0 md:h-screen md:self-start md:translate-x-0 md:z-auto ` +
-          `fixed inset-y-0 left-0 z-50 h-screen transform transition-transform duration-200 ease-out ` +
-          (mobileMenuOpen ? "translate-x-0 " : "-translate-x-full ")
+          // Mobile: fixed off-canvas slide-in.
+          // Desktop (md+): static in normal flow, sticky to top.
+          `bg-white border-r border-slate-200 flex flex-col ` +
+          `fixed top-0 left-0 z-50 h-screen w-64 transition-transform duration-200 ease-out ` +
+          (mobileMenuOpen ? "translate-x-0 " : "-translate-x-full ") +
+          `md:sticky md:translate-x-0 md:w-60 md:top-0 md:z-auto md:h-screen md:self-start md:shrink-0`
         }
       >
         <div className="flex items-center justify-between px-4 py-5">
@@ -380,5 +382,6 @@ export function AppLayout() {
         <Outlet />
       </main>
     </div>
+    </>
   );
 }
