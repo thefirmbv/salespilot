@@ -203,7 +203,8 @@ export function AppLayout() {
       title: "Outreach",
       items: [
         { to: "/sequences", label: "Sequences", icon: "send" },
-        { to: "/linkedin", label: "LinkedIn", icon: "linkedin" },
+        { to: "/linkedin", label: "LinkedIn (legacy)", icon: "linkedin" },
+        { to: "/social", label: "LinkedIn posts", icon: "edit" },
         { to: "/mail-campaigns", label: "Mail Campaigns", icon: "megaphone" },
       ],
     },

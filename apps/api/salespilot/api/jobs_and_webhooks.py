@@ -647,3 +647,68 @@ async def linkedin_oauth_callback(
         await db.commit()
 
     return RedirectResponse(url=f"{public_base}/settings/integrations/linkedin?ok=1")
+
+
+@internal_router.post("/social/tick")
+async def social_tick(
+    x_internal_token: str = Header(default=""),
+) -> dict[str, Any]:
+    """Run the social-scheduler for every org. Authenticated with the
+    same internal token as the autopilot tick.
+
+    This calls api.social._publish_one for each due scheduled post,
+    iterating per org so RLS context is correct.
+    """
+    settings = get_settings()
+    expected = settings.autopilot_internal_token.get_secret_value()
+    if not expected or x_internal_token != expected:
+        raise HTTPException(status_code=401, detail="bad internal token")
+
+    from salespilot.api.social import _publish_one
+    from salespilot.models.social import SocialPost
+
+    total_due = 0
+    total_published = 0
+    total_failed = 0
+
+    async with get_sessionmaker()() as db:
+        orgs = (await db.execute(select(Organization))).scalars().all()
+
+    for org in orgs:
+        async with get_sessionmaker()() as db:
+            await _set_org_context(db, org.id)
+            now = datetime.now(UTC)
+            due = (
+                await db.execute(
+                    select(SocialPost).where(
+                        SocialPost.status == "scheduled",
+                        SocialPost.scheduled_at.is_not(None),
+                        SocialPost.scheduled_at <= now,
+                    )
+                )
+            ).scalars().all()
+            for p in due:
+                total_due += 1
+                p.status = "publishing"
+                await db.flush()
+                try:
+                    await _publish_one(db, p)
+                    if p.status == "published":
+                        total_published += 1
+                    else:
+                        total_failed += 1
+                except Exception as e:  # noqa: BLE001
+                    p.status = "failed"
+                    p.last_error = str(e)[:500]
+                    p.retry_count += 1
+                    await db.flush()
+                    total_failed += 1
+            await db.commit()
+
+    return {
+        "ok": True,
+        "due": total_due,
+        "published": total_published,
+        "failed": total_failed,
+    }
+

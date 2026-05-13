@@ -21,6 +21,7 @@ from salespilot.models import autopilot as _auto  # noqa: F401
 from salespilot.models import quotation as _quot  # noqa: F401
 from salespilot.models import mail_campaign as _mc  # noqa: F401
 from salespilot.models import wespennest as _wn  # noqa: F401
+from salespilot.models import social as _social  # noqa: F401
 
 config = context.config
 
