@@ -579,3 +579,176 @@ async def reset_invite(user_id: UUID, auth: CurrentAuth, db: Db) -> InviteResult
 
 
 
+
+
+# ===== Signed SEPA mandates (sign.it-gemak.nl) =====
+
+from pathlib import Path as _Path
+from fastapi.responses import FileResponse as _FileResponse
+from salespilot.models.signing import SignedMandate as _SignedMandate
+
+
+class SignedMandatePublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    umr: str
+    debtor_name: str
+    debtor_email: str
+    debtor_iban: str
+    debtor_city: str
+    debtor_kvk: str | None = None
+    sign_place: str
+    kvk_verified: bool
+    status: str
+    ip_address: str | None = None
+    geo_country: str | None = None
+    geo_city: str | None = None
+    pdf_sha256: str | None = None
+    has_pdf: bool = False
+    emailed_at: datetime | None = None
+    email_error: str | None = None
+    created_at: datetime
+
+
+@router.get("/mandates", response_model=list[SignedMandatePublic])
+async def list_mandates(
+    auth: CurrentAuth, db: Db, limit: int = 200,
+) -> list[SignedMandatePublic]:
+    """List signed SEPA mandates for this org. Visible to all logged-in
+    users (no platform-admin requirement) so the sales team can see what
+    customers signed; deletion is admin-only (separate endpoint)."""
+    # signed_mandates is NOT tenant-scoped via RLS (public submissions),
+    # so we filter by org_id explicitly using the caller's org.
+    rows = (
+        await db.execute(
+            select(_SignedMandate)
+            .where(_SignedMandate.org_id == auth.org_id)
+            .order_by(_SignedMandate.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    out: list[SignedMandatePublic] = []
+    for r in rows:
+        has_pdf = bool(r.pdf_path) and _Path(r.pdf_path).exists()
+        out.append(SignedMandatePublic(
+            id=r.id, umr=r.umr,
+            debtor_name=r.debtor_name, debtor_email=r.debtor_email,
+            debtor_iban=r.debtor_iban, debtor_city=r.debtor_city,
+            debtor_kvk=r.debtor_kvk, sign_place=r.sign_place,
+            kvk_verified=r.kvk_verified, status=r.status,
+            ip_address=r.ip_address,
+            geo_country=r.geo_country, geo_city=r.geo_city,
+            pdf_sha256=r.pdf_sha256, has_pdf=has_pdf,
+            emailed_at=r.emailed_at, email_error=r.email_error,
+            created_at=r.created_at,
+        ))
+    return out
+
+
+@router.get("/mandates/{mandate_id}")
+async def get_mandate_detail(
+    mandate_id: UUID, auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    """Full mandate detail incl. signature base64 + full audit trail.
+    Used by the admin detail drawer; PDF is fetched separately."""
+    row = await db.get(_SignedMandate, mandate_id)
+    if row is None or row.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="mandate not found")
+    return {
+        "id": str(row.id),
+        "umr": row.umr,
+        "debtor_name": row.debtor_name,
+        "debtor_address": row.debtor_address,
+        "debtor_postcode": row.debtor_postcode,
+        "debtor_city": row.debtor_city,
+        "debtor_country": row.debtor_country,
+        "debtor_iban": row.debtor_iban,
+        "debtor_bic": row.debtor_bic,
+        "debtor_email": row.debtor_email,
+        "debtor_phone": row.debtor_phone,
+        "debtor_kvk": row.debtor_kvk,
+        "sign_place": row.sign_place,
+        "signature_png_base64": row.signature_png_base64,
+        "ip_address": row.ip_address,
+        "user_agent": row.user_agent,
+        "geo_country": row.geo_country,
+        "geo_region": row.geo_region,
+        "geo_city": row.geo_city,
+        "geo_lat": float(row.geo_lat) if row.geo_lat is not None else None,
+        "geo_lon": float(row.geo_lon) if row.geo_lon is not None else None,
+        "kvk_verified": row.kvk_verified,
+        "kvk_verified_at": row.kvk_verified_at.isoformat() if row.kvk_verified_at else None,
+        "kvk_raw": row.kvk_raw,
+        "pdf_sha256": row.pdf_sha256,
+        "has_pdf": bool(row.pdf_path) and _Path(row.pdf_path).exists(),
+        "status": row.status,
+        "emailed_at": row.emailed_at.isoformat() if row.emailed_at else None,
+        "email_error": row.email_error,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+@router.get("/mandates/{mandate_id}/pdf")
+async def get_mandate_pdf(
+    mandate_id: UUID, auth: CurrentAuth, db: Db,
+) -> _FileResponse:
+    """Stream the stored PDF for this mandate."""
+    row = await db.get(_SignedMandate, mandate_id)
+    if row is None or row.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="mandate not found")
+    if not row.pdf_path:
+        raise HTTPException(status_code=404, detail="PDF not generated for this mandate")
+    p = _Path(row.pdf_path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="PDF file missing on disk")
+    return _FileResponse(
+        path=str(p),
+        media_type="application/pdf",
+        filename=f"SEPA-mandaat-{row.umr}.pdf",
+    )
+
+
+@router.post("/mandates/{mandate_id}/resend-email")
+async def resend_mandate_email(
+    mandate_id: UUID, auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    """Re-send the mandate PDF to administratie@it-gemak.nl + debtor.
+    Used when the original delivery failed (status='failed' / email_error
+    populated). The PDF on disk is reused -- we don't re-render."""
+    row = await db.get(_SignedMandate, mandate_id)
+    if row is None or row.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="mandate not found")
+    if not row.pdf_path or not _Path(row.pdf_path).exists():
+        raise HTTPException(status_code=400, detail="PDF missing; cannot resend")
+
+    from salespilot.api.sign import _send_mandate_email
+    pdf_bytes = _Path(row.pdf_path).read_bytes()
+
+    # Reconstruct the SubmitRequest-shaped object the helper needs
+    class _Stub:
+        debtor_name = row.debtor_name
+        debtor_address = row.debtor_address
+        debtor_postcode = row.debtor_postcode
+        debtor_city = row.debtor_city
+        debtor_country = row.debtor_country
+        debtor_iban = row.debtor_iban
+        debtor_bic = row.debtor_bic
+        debtor_email = row.debtor_email
+        debtor_phone = row.debtor_phone
+        debtor_kvk = row.debtor_kvk
+        sign_place = row.sign_place
+    try:
+        await _send_mandate_email(
+            umr=row.umr, debtor=_Stub(),
+            pdf_bytes=pdf_bytes, kvk_verified=row.kvk_verified,
+        )
+        row.status = "emailed"
+        row.emailed_at = datetime.now(UTC)
+        row.email_error = None
+        await db.commit()
+        return {"ok": True}
+    except Exception as e:
+        row.email_error = str(e)[:500]
+        await db.commit()
+        raise HTTPException(status_code=502, detail=str(e)[:200])

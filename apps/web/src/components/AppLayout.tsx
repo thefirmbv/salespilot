@@ -212,6 +212,7 @@ export function AppLayout() {
       title: "External",
       items: [
         { to: "/quotations", label: "Quotations", icon: "globe", badge: counts.quotations_open },
+        { to: "/mandates", label: "SEPA-mandaten", icon: "shield" },
       ],
     },
   ];
