@@ -276,7 +276,7 @@ async def accept_invite(data: AcceptInviteBody) -> TokenPair:
         if m is None:
             raise HTTPException(status_code=400, detail="user has no organization yet")
         await db.commit()
-        access = create_access_token(user_id=str(user.id), org_id=str(m.org_id))
-        refresh = create_refresh_token(user_id=str(user.id), org_id=str(m.org_id))
-        return TokenPair(access_token=access, refresh_token=refresh)
+        access, exp = create_access_token(str(user.id), str(m.org_id))
+        refresh, _ = create_refresh_token(str(user.id))
+        return TokenPair(access_token=access, refresh_token=refresh, access_expires_at=exp)
 

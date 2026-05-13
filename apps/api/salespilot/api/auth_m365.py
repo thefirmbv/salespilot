@@ -207,8 +207,8 @@ async def m365_callback(request: Request, code: str | None = None, error: str | 
             return _login_redirect(error="no_membership")
         await db.commit()
 
-        access = create_access_token(user_id=str(user.id), org_id=str(m.org_id))
-        refresh = create_refresh_token(user_id=str(user.id), org_id=str(m.org_id))
+        access, _exp = create_access_token(str(user.id), str(m.org_id))
+        refresh, _rexp = create_refresh_token(str(user.id))
 
     # Drop the tokens into a short-lived URL fragment so the frontend can
     # pick them up. Avoids storing tokens server-side in a session.
