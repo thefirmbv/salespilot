@@ -97,6 +97,76 @@ const KINDS: Record<string, KindMeta> = {
       { name: "access_token", label: "Access token (manual until OAuth flow)", type: "password", secret: true, help: "Will be replaced by OAuth flow in a future update." },
     ],
   },
+
+  // ---- Wespennest data sources ----
+
+  kvk: {
+    label: "KVK (officieel)",
+    description: "Officiële KVK API. Best for bestuurder-namen (Functionarissen) en geverifieerde fte. Vereist abonnement (€6,40/mnd + €0,05/call) en handmatige goedkeuring van ±5 werkdagen.",
+    docsUrl: "https://developers.kvk.nl/",
+    supportsSync: false,
+    fields: [
+      { name: "base_url", label: "Base URL", placeholder: "https://api.kvk.nl/api", help: "Laat default tenzij anders geïnstrueerd." },
+      { name: "api_key", label: "Basisprofiel API-key", type: "password", secret: true, help: "Voor bedrijfs-zoek + basisprofiel. Stored encrypted." },
+      { name: "functionarissen_key", label: "Functionarissen API-key (optioneel)", type: "password", secret: true, help: "Aparte key voor bestuurder-data. Vraag deze los aan bij KVK." },
+    ],
+  },
+
+  openkvk: {
+    label: "OpenKVK",
+    description: "Gratis open KVK-data via overheid.io. Werkt direct zonder key (rate-limited). Met een gratis key zijn er veel meer requests beschikbaar. Onze aanbeveling om mee te starten terwijl je op de officiële KVK wacht.",
+    docsUrl: "https://overheid.io/documentatie/openkvk",
+    supportsSync: false,
+    fields: [
+      { name: "base_url", label: "Base URL", placeholder: "https://api.overheid.io/openkvk", help: "Laat default." },
+      { name: "api_key", label: "ovio-api-key (optioneel)", type: "password", secret: true, help: "Vraag een gratis key aan op overheid.io voor hogere rate-limits." },
+    ],
+  },
+
+  pdok: {
+    label: "PDOK Geocoder",
+    description: "Gratis Nederlandse geocoder voor postcodes en adressen → coördinaten. Vereist voor het 40 km-filter. Geen account nodig.",
+    docsUrl: "https://www.pdok.nl/restful-api/-/article/pdok-locatieserver",
+    supportsSync: false,
+    fields: [
+      { name: "base_url", label: "Base URL", placeholder: "https://api.pdok.nl", help: "Laat default." },
+      { name: "hq_label", label: "HQ locatie label", placeholder: "Breukelen", help: "Naam van de plaats waarvandaan afstand gemeten wordt." },
+      { name: "hq_lat", label: "HQ latitude", placeholder: "52.1719", help: "Default = Breukelen." },
+      { name: "hq_lon", label: "HQ longitude", placeholder: "4.9994", help: "Default = Breukelen." },
+    ],
+  },
+
+  crtsh: {
+    label: "crt.sh",
+    description: "Certificate Transparency log search. Vindt klant-domeinen die onder dezelfde wildcard-certificaten van een MSP zitten. Gratis, geen account.",
+    docsUrl: "https://crt.sh/",
+    supportsSync: false,
+    fields: [
+      { name: "base_url", label: "Base URL", placeholder: "https://crt.sh", help: "Laat default." },
+    ],
+  },
+
+  hunter: {
+    label: "Hunter.io",
+    description: "Optionele commerciële bron voor email-pattern discovery en email verificatie. 25 zoekopdrachten/mnd gratis, daarna $34+/mnd. Voor NL-MKB kunnen we vaak al met patroon-rules + SMTP-probe.",
+    docsUrl: "https://hunter.io/api",
+    supportsSync: false,
+    fields: [
+      { name: "base_url", label: "Base URL", placeholder: "https://api.hunter.io/v2", help: "Laat default." },
+      { name: "api_key", label: "Hunter API-key", type: "password", secret: true, help: "Stored encrypted." },
+    ],
+  },
+
+  apollo: {
+    label: "Apollo.io",
+    description: "Optionele commerciële bron voor internationale decision-maker enrichment. $49+/mnd. Voor NL-MKB minder geschikt — gebruik KVK Functionarissen + LinkedIn.",
+    docsUrl: "https://apolloio.github.io/apollo-api-docs/",
+    supportsSync: false,
+    fields: [
+      { name: "base_url", label: "Base URL", placeholder: "https://api.apollo.io/v1", help: "Laat default." },
+      { name: "api_key", label: "Apollo API-key", type: "password", secret: true, help: "Stored encrypted." },
+    ],
+  },
 };
 
 export function IntegrationConfigure() {

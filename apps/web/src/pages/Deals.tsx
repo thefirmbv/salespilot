@@ -99,14 +99,29 @@ function fmtDate(iso: string | null): string {
 
 function PhoneLink({ phone }: { phone: string | null }) {
   if (!phone) return <span className="text-slate-400">\u2014</span>;
+  // Render as <span> with onClick handler instead of <a> because this
+  // component is rendered inside a <Link> (router <a>). Nested <a> tags
+  // are invalid HTML and many browsers drop the outer link entirely.
   return (
-    <a
-      href={`tel:${phone}`}
-      onClick={(e) => e.stopPropagation()}
-      className="font-mono text-[11px] text-slate-700 hover:text-brand-600 hover:underline"
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.location.href = `tel:${phone}`;
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          window.location.href = `tel:${phone}`;
+        }
+      }}
+      className="font-mono text-[11px] text-slate-700 hover:text-brand-600 hover:underline cursor-pointer"
     >
       {phone}
-    </a>
+    </span>
   );
 }
 

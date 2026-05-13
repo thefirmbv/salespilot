@@ -28,6 +28,13 @@ const KIND_STYLES: Record<string, { bg: string; fg: string; icon: string }> = {
   anthropic:   { bg: "bg-purple-50", fg: "text-purple-700", icon: "✨" },
   mailgun:     { bg: "bg-orange-50", fg: "text-orange-700", icon: "✉️" },
   linkedin:    { bg: "bg-sky-50",    fg: "text-sky-700",    icon: "in" },
+  // Wespennest sources
+  kvk:         { bg: "bg-rose-50",   fg: "text-rose-700",   icon: "🏛️" },
+  openkvk:     { bg: "bg-emerald-50",fg: "text-emerald-700",icon: "🇳🇱" },
+  pdok:        { bg: "bg-teal-50",   fg: "text-teal-700",   icon: "📍" },
+  crtsh:       { bg: "bg-slate-100", fg: "text-slate-700",  icon: "🔐" },
+  hunter:      { bg: "bg-yellow-50", fg: "text-yellow-700", icon: "🎯" },
+  apollo:      { bg: "bg-violet-50", fg: "text-violet-700", icon: "🚀" },
 };
 
 function relativeShort(iso: string | null): string {

@@ -105,7 +105,19 @@ async def list_quotations(
         elif bucket == "rejected":
             stmt = stmt.where(Quotation.status == "rejected")
 
-    stmt = stmt.order_by(Quotation.sent_at.desc().nullslast(), Quotation.updated_at.desc()).limit(limit)
+    # Order depends on bucket: for active buckets (sent/expiring/expired)
+    # the user wants the longest-outstanding offer at the top so it can be
+    # followed up first. For closed buckets (accepted/rejected) the most
+    # recent decision is most relevant. "All" defaults to oldest-first
+    # because the list is primarily a follow-up tool.
+    if bucket in ("accepted", "rejected"):
+        stmt = stmt.order_by(
+            Quotation.sent_at.desc().nullslast(), Quotation.updated_at.desc()
+        ).limit(limit)
+    else:
+        stmt = stmt.order_by(
+            Quotation.sent_at.asc().nullsfirst(), Quotation.updated_at.asc()
+        ).limit(limit)
     rows = (await db.execute(stmt)).scalars().all()
     return [await _enrich_one(db, q) for q in rows]
 

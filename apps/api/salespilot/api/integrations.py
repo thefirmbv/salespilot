@@ -32,6 +32,13 @@ from salespilot.integrations.halopsa import (
     HaloPSAError,
 )
 from salespilot.integrations.mx import detect_mail_platform
+from salespilot.integrations.wespennest_sources import (
+    CrtShClient,
+    KvkClient,
+    OpenKvkClient,
+    PdokClient,
+    SourceTestResult,
+)
 from salespilot.integrations.prospectpro import (
     ProspectPROClient,
     ProspectPROCredentials,
@@ -59,6 +66,14 @@ PROSPECTPRO_KIND = "prospectpro"
 ANTHROPIC_KIND = "anthropic"
 MAILGUN_KIND = "mailgun"
 LINKEDIN_KIND = "linkedin"
+# Wespennest data sources -- each can be toggled on/off independently.
+# Order roughly matches the discovery -> enrichment pipeline.
+KVK_KIND = "kvk"
+OPENKVK_KIND = "openkvk"
+PDOK_KIND = "pdok"
+CRTSH_KIND = "crtsh"
+HUNTER_KIND = "hunter"
+APOLLO_KIND = "apollo"
 
 
 def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -98,6 +113,51 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
             "client_secret_set": bool(cfg.get("client_secret")),
             "access_token_set": bool(cfg.get("access_token")),
         }
+    # ---- Wespennest sources ----
+    if kind == KVK_KIND:
+        # KVK API (https://developers.kvk.nl). Requires manual approval
+        # (~5 working days). Two keys: basisprofiel + functionarissen.
+        return {
+            "base_url": cfg.get("base_url") or "https://api.kvk.nl/api",
+            "api_key_set": bool(cfg.get("api_key")),
+            "functionarissen_key_set": bool(cfg.get("functionarissen_key")),
+        }
+    if kind == OPENKVK_KIND:
+        # OpenKVK / overheid.io. Free, no signup needed. We expose
+        # base_url only so an alternative mirror can be plugged in.
+        return {
+            "base_url": cfg.get("base_url") or "https://api.overheid.io/openkvk",
+            "api_key_set": bool(cfg.get("api_key")),  # optional (rate limits)
+        }
+    if kind == PDOK_KIND:
+        # PDOK geocoder (BAG + locatieserver). Free, no signup.
+        # Used for address -> lat/lon and distance-to-Breukelen.
+        return {
+            "base_url": cfg.get("base_url") or "https://api.pdok.nl",
+            "hq_lat": cfg.get("hq_lat") or 52.1719,
+            "hq_lon": cfg.get("hq_lon") or 4.9994,
+            "hq_label": cfg.get("hq_label") or "Breukelen",
+        }
+    if kind == CRTSH_KIND:
+        # crt.sh (Certificate Transparency search). Free, no signup.
+        # Used to find customer domains under one MSP's wildcard cert.
+        return {
+            "base_url": cfg.get("base_url") or "https://crt.sh",
+        }
+    if kind == HUNTER_KIND:
+        # Hunter.io. Optional commercial email-pattern + verify source.
+        # 25 free searches/mnd, $34+/mnd paid.
+        return {
+            "base_url": cfg.get("base_url") or "https://api.hunter.io/v2",
+            "api_key_set": bool(cfg.get("api_key")),
+        }
+    if kind == APOLLO_KIND:
+        # Apollo.io. Optional commercial source for international leads
+        # + LinkedIn-style enrichment. $49+/mnd.
+        return {
+            "base_url": cfg.get("base_url") or "https://api.apollo.io/v1",
+            "api_key_set": bool(cfg.get("api_key")),
+        }
     return {}
 
 
@@ -129,6 +189,13 @@ async def list_integrations(db: Db) -> list[IntegrationSummary]:
         (ANTHROPIC_KIND, "Anthropic (Claude)", "AI-generated callscripts on the prospect detail page"),
         (MAILGUN_KIND, "Mailgun", "Outbound mail + inbound reply detection for sequences"),
         (LINKEDIN_KIND, "LinkedIn", "Post scheduling + outreach task tracking"),
+        # ---- Wespennest data sources ----
+        (KVK_KIND, "KVK (officieel)", "Officiële KVK API — basisprofiel, vestigingen, functionarissen. Activatie 2-5 werkdagen, €6,40/mnd + €0,05/call."),
+        (OPENKVK_KIND, "OpenKVK", "Gratis open KVK-data via overheid.io. Direct werkend, 80% van wat de officiële KVK biedt."),
+        (PDOK_KIND, "PDOK Geocoder", "Gratis NL postcode/adres → coördinaten. Vereist voor het 40 km-filter."),
+        (CRTSH_KIND, "crt.sh (CT logs)", "Gratis Certificate Transparency search — vindt klant-domeinen onder MSP-wildcards."),
+        (HUNTER_KIND, "Hunter.io", "Optioneel — email-pattern discovery + verify. 25 gratis/mnd, anders $34+/mnd."),
+        (APOLLO_KIND, "Apollo.io", "Optioneel — internationale decision-maker enrichment. $49+/mnd. Voor NL-MKB minder geschikt."),
     ]
     out: list[IntegrationSummary] = []
     for kind, label, desc in known:
@@ -183,6 +250,12 @@ _make_kind_routes(PROSPECTPRO_KIND)
 _make_kind_routes(ANTHROPIC_KIND)
 _make_kind_routes(MAILGUN_KIND)
 _make_kind_routes(LINKEDIN_KIND)
+_make_kind_routes(KVK_KIND)
+_make_kind_routes(OPENKVK_KIND)
+_make_kind_routes(PDOK_KIND)
+_make_kind_routes(CRTSH_KIND)
+_make_kind_routes(HUNTER_KIND)
+_make_kind_routes(APOLLO_KIND)
 
 
 # ---- HaloPSA test/sync ----
@@ -661,3 +734,76 @@ async def linkedin_oauth_url(
         "scope": scopes,
     }
     return {"authorize_url": f"https://www.linkedin.com/oauth/v2/authorization?{urlencode(params)}"}
+
+
+# ---- Wespennest source test endpoints ----
+
+
+def _wn_test_result(r: SourceTestResult) -> TestConnectionResult:
+    return TestConnectionResult(ok=r.ok, detail=r.detail, token_present=True)
+
+
+@router.post(f"/{KVK_KIND}/test", response_model=TestConnectionResult)
+async def test_kvk(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    row = await _get_integration(db, KVK_KIND)
+    if row is None:
+        raise HTTPException(status_code=400, detail="KVK not configured yet")
+    cfg = row.config_json or {}
+    client = KvkClient(
+        base_url=cfg.get("base_url"),
+        api_key=cfg.get("api_key"),
+        functionarissen_key=cfg.get("functionarissen_key"),
+    )
+    return _wn_test_result(await client.test_connection())
+
+
+@router.post(f"/{OPENKVK_KIND}/test", response_model=TestConnectionResult)
+async def test_openkvk(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    row = await _get_integration(db, OPENKVK_KIND)
+    cfg = (row.config_json if row else None) or {}
+    client = OpenKvkClient(base_url=cfg.get("base_url"), api_key=cfg.get("api_key"))
+    return _wn_test_result(await client.test_connection())
+
+
+@router.post(f"/{PDOK_KIND}/test", response_model=TestConnectionResult)
+async def test_pdok(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    row = await _get_integration(db, PDOK_KIND)
+    cfg = (row.config_json if row else None) or {}
+    client = PdokClient(base_url=cfg.get("base_url"))
+    return _wn_test_result(await client.test_connection())
+
+
+@router.post(f"/{CRTSH_KIND}/test", response_model=TestConnectionResult)
+async def test_crtsh(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    row = await _get_integration(db, CRTSH_KIND)
+    cfg = (row.config_json if row else None) or {}
+    client = CrtShClient(base_url=cfg.get("base_url"))
+    return _wn_test_result(await client.test_connection())
+
+
+@router.post(f"/{HUNTER_KIND}/test", response_model=TestConnectionResult)
+async def test_hunter(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    """Hunter.io test - just verifies the key was saved. We don't burn the
+    user's free quota by making a real lookup."""
+    row = await _get_integration(db, HUNTER_KIND)
+    if row is None or not (row.config_json or {}).get("api_key"):
+        raise HTTPException(status_code=400, detail="Hunter.io API-key niet ingesteld")
+    return TestConnectionResult(
+        ok=True,
+        detail="Hunter.io key is opgeslagen. (Geen test-call gedaan om je free quota niet te verbranden.)",
+        token_present=True,
+    )
+
+
+@router.post(f"/{APOLLO_KIND}/test", response_model=TestConnectionResult)
+async def test_apollo(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    """Apollo.io test - same idea as Hunter."""
+    row = await _get_integration(db, APOLLO_KIND)
+    if row is None or not (row.config_json or {}).get("api_key"):
+        raise HTTPException(status_code=400, detail="Apollo.io API-key niet ingesteld")
+    return TestConnectionResult(
+        ok=True,
+        detail="Apollo.io key is opgeslagen. (Geen test-call gedaan om je free quota niet te verbranden.)",
+        token_present=True,
+    )
+

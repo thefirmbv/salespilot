@@ -105,6 +105,22 @@ const BUCKETS = [
   { id: "done",     label: "Afgerond"    },
 ];
 
+/** Maps a bucket id to the right counter from the summary endpoint. Returns
+ * null when the bucket has no direct counter — that's fine, the badge just
+ * doesn't render then. */
+function bucketCount(id: string, s: Summary | undefined): number | null {
+  if (!s) return null;
+  switch (id) {
+    case "":         return s.open_total;
+    case "overdue":  return s.overdue_count;
+    case "today":    return s.today_count;
+    case "week":     return s.this_week_count;
+    case "followup": return s.open_followup_count;
+    case "done":     return s.completed_30d_count;
+    default:         return null;
+  }
+}
+
 export function Activities() {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
@@ -184,30 +200,47 @@ export function Activities() {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 px-4 py-2">
-          {BUCKETS.map((b) => (
-            <button
-              key={b.id}
-              onClick={() => {
-                const next = new URLSearchParams(params);
-                if (b.id) next.set("bucket", b.id);
-                else next.delete("bucket");
-                setParams(next, { replace: true });
-              }}
-              className={`rounded-md px-2.5 py-1 text-xs ${
-                bucket === b.id
-                  ? "bg-brand-500 text-white"
-                  : "text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              {b.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2">
+          {BUCKETS.map((b) => {
+            const count = bucketCount(b.id, summary);
+            const isActive = bucket === b.id;
+            return (
+              <button
+                key={b.id}
+                onClick={() => {
+                  const next = new URLSearchParams(params);
+                  if (b.id) next.set("bucket", b.id);
+                  else next.delete("bucket");
+                  setParams(next, { replace: true });
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition ${
+                  isActive
+                    ? "border-brand-500 bg-brand-500 text-white shadow-sm"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+                }`}
+              >
+                <span>{b.label}</span>
+                {count !== null && (
+                  <span
+                    className={`inline-flex min-w-[20px] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${
+                      isActive
+                        ? "bg-white/25 text-white"
+                        : count > 0
+                          ? "bg-slate-100 text-slate-700"
+                          : "bg-slate-50 text-slate-400"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
           <input
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Zoek\u2026"
-            className="ml-auto min-w-[200px] rounded-md border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="ml-auto min-w-[200px] rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
 
