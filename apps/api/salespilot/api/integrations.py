@@ -64,6 +64,7 @@ companies_extra_router = APIRouter(prefix="/companies", tags=["companies"])
 HALOPSA_KIND = "halopsa"
 PROSPECTPRO_KIND = "prospectpro"
 ANTHROPIC_KIND = "anthropic"
+OPENAI_KIND = "openai"
 MAILGUN_KIND = "mailgun"
 LINKEDIN_KIND = "linkedin"
 # Wespennest data sources -- each can be toggled on/off independently.
@@ -97,6 +98,12 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
     if kind == ANTHROPIC_KIND:
         return {
             "model": cfg.get("model") or "claude-sonnet-4-5-20250929",
+            "api_key_set": bool(cfg.get("api_key")),
+        }
+    if kind == OPENAI_KIND:
+        return {
+            "model": cfg.get("model") or "gpt-4o-mini",
+            "base_url": cfg.get("base_url") or "https://api.openai.com/v1",
             "api_key_set": bool(cfg.get("api_key")),
         }
     if kind == MAILGUN_KIND:
@@ -181,6 +188,7 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
         # Wespennest behavioural preferences.
         return {
             "primary_kvk_source": cfg.get("primary_kvk_source") or "auto",
+            "ai_classifier_source": cfg.get("ai_classifier_source") or "auto",
         }
     if kind == PBX_3CX_KIND:
         return {
@@ -231,7 +239,8 @@ async def list_integrations(db: Db) -> list[IntegrationSummary]:
     known = [
         (HALOPSA_KIND, "HaloPSA", "PSA / ticketing — read clients, push prospects, fetch quotations"),
         (PROSPECTPRO_KIND, "ProspectPRO", "B2B prospect database + website visitor identification"),
-        (ANTHROPIC_KIND, "Anthropic (Claude)", "AI-generated callscripts on the prospect detail page"),
+        (ANTHROPIC_KIND, "Anthropic (Claude)", "AI-classifier voor de overname-monitor en callscript-generatie. Vereist API key + losse credits."),
+        (OPENAI_KIND, "OpenAI (GPT)", "AI-classifier en tekst-generatie via OpenAI. Wordt automatisch geprefereerd als beide AI-providers aan staan."),
         (MAILGUN_KIND, "Mailgun", "Outbound mail + inbound reply detection for sequences"),
         (LINKEDIN_KIND, "LinkedIn", "Post scheduling + outreach task tracking"),
         # ---- Wespennest data sources ----
@@ -335,6 +344,7 @@ _make_kind_routes(APOLLO_KIND)
 _make_kind_routes(M365_SSO_KIND)
 _make_kind_routes(PBX_3CX_KIND)
 _make_kind_routes(WESPENNEST_KIND)
+_make_kind_routes(OPENAI_KIND)
 
 
 # ---- HaloPSA test/sync ----

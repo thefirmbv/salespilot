@@ -776,108 +776,82 @@ class _ClassifiedSignal:
     confidence: int  # 0-100
 
 
-async def _classify_with_claude(
-    title: str, body: str, *, api_key: str | None = None
-) -> _ClassifiedSignal | None:
-    """Use Anthropic Claude to classify an RSS item. Returns None if no
-    API key is configured -- caller treats that as 'pre-filter only'.
+async def _classify_with_ai_provider(
+    db: AsyncSession, org_id: UUID, title: str, body: str,
+) -> tuple[_ClassifiedSignal | None, str | None]:
+    """Classify an RSS item via the org's preferred AI provider.
 
-    The key is resolved by the caller (from the org's Anthropic integration
-    row, falling back to the ANTHROPIC_API_KEY env var) and passed in.
+    Uses the generic salespilot.ai.classifier helper, which routes through
+    OpenAI or Anthropic based on the wespennest ai_classifier_source
+    preference. Returns (None, None) when no provider is configured or all
+    attempts failed. Second tuple element is the provider name actually
+    used, for logging.
     """
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
+    from salespilot.ai.classifier import classify_with_ai
 
-    prompt = f"""Classify this Dutch IT news item.
+    system_prompt = (
+        "You classify Dutch IT-news items into structured JSON. "
+        "Mark is_acquisition=true ONLY when one IT-company actually buys, "
+        "merges with, or takes over another IT-company. Investments in "
+        "unrelated industries, product launches, hiring news, or vague "
+        "announcements do not count."
+    )
+    user_prompt = (
+        f"Title: {title}\n"
+        f"Body: {body[:1200]}\n\n"
+        "Return JSON only, no preamble:\n"
+        "{\n"
+        "  \"is_acquisition\": true|false,\n"
+        "  \"acquired_party\": \"name of MSP/company being acquired\" or null,\n"
+        "  \"acquiring_party\": \"name of acquirer\" or null,\n"
+        "  \"summary\": \"1 sentence Dutch summary\",\n"
+        "  \"confidence\": 0-100\n"
+        "}"
+    )
 
-Title: {title}
-Body: {body[:1200]}
-
-Return JSON only, no preamble:
-{{
-  "is_acquisition": true/false,
-  "acquired_party": "name of MSP/company being acquired" or null,
-  "acquiring_party": "name of acquirer" or null,
-  "summary": "1 sentence Dutch summary",
-  "confidence": 0-100
-}}
-Only mark is_acquisition=true if the article is about one IT-company actually buying another IT-company, NOT just announcements or investments in unrelated industries."""
+    result = await classify_with_ai(
+        db=db, org_id=org_id,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        max_tokens=400,
+    )
+    if result is None:
+        return None, None
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as c:
-            r = await c.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 400,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-            if not r.is_success:
-                return None
-            data = r.json() or {}
-            content = (data.get("content") or [{}])[0].get("text") or ""
-            # Find a JSON object in the response
-            import json
-            m = re.search(r"\{.*\}", content, re.DOTALL)
-            if not m:
-                return None
-            parsed = json.loads(m.group(0))
-            return _ClassifiedSignal(
-                is_acquisition=bool(parsed.get("is_acquisition")),
-                acquired_party=parsed.get("acquired_party"),
-                acquiring_party=parsed.get("acquiring_party"),
-                summary=str(parsed.get("summary") or "")[:500],
-                confidence=int(parsed.get("confidence") or 0),
-            )
+        import json
+        m = re.search(r"\{.*\}", result.text, re.DOTALL)
+        if not m:
+            return None, result.provider
+        parsed = json.loads(m.group(0))
+        return _ClassifiedSignal(
+            is_acquisition=bool(parsed.get("is_acquisition")),
+            acquired_party=parsed.get("acquired_party"),
+            acquiring_party=parsed.get("acquiring_party"),
+            summary=str(parsed.get("summary") or "")[:500],
+            confidence=int(parsed.get("confidence") or 0),
+        ), result.provider
     except Exception:
-        return None
-
-
-async def _resolve_anthropic_key(db: AsyncSession) -> str | None:
-    """Read the org's Anthropic integration; fall back to env var."""
-    try:
-        from salespilot.models.integrations import Integration
-        row = (
-            await db.execute(
-                select(Integration).where(
-                    Integration.kind == "anthropic",
-                    Integration.is_enabled == True,  # noqa: E712
-                )
-            )
-        ).scalar_one_or_none()
-        if row:
-            key = (row.config_json or {}).get("api_key")
-            if key:
-                return str(key)
-    except Exception:
-        pass
-    return os.environ.get("ANTHROPIC_API_KEY")
+        return None, result.provider
 
 
 async def scan_overname_signals(
     db: AsyncSession,
     org_id: UUID,
     max_items_per_feed: int = 25,
-    use_claude: bool = True,
+    use_classifier: bool = True,
 ) -> dict[str, Any]:
-    """Poll Dutch IT news RSS feeds, keyword pre-filter, then Claude-classify
-    matches. Writes new WnAcquisitionSignal rows (skipping URLs we already
-    have).
+    """Poll Dutch IT news RSS feeds, keyword pre-filter, then AI-classify
+    matches via OpenAI or Anthropic (chosen by org preference).
+
+    use_classifier=False forces keyword-only mode regardless of config.
     """
-    claude_key = await _resolve_anthropic_key(db) if use_claude else None
     processed = 0
     relevant = 0
     created = 0
     classified_yes = 0
     skipped_dup = 0
     classifier_used = False
+    classifier_provider: str | None = None
 
     # Pull existing URLs once so we don't write duplicates
     existing_urls = set(
@@ -905,10 +879,13 @@ async def scan_overname_signals(
             relevant += 1
 
             classified: _ClassifiedSignal | None = None
-            if use_claude and claude_key:
-                classified = await _classify_with_claude(title, body, api_key=claude_key)
+            if use_classifier:
+                classified, provider = await _classify_with_ai_provider(
+                    db, org_id, title, body,
+                )
                 if classified is not None:
                     classifier_used = True
+                    classifier_provider = provider
 
             # Decide whether to record. If Claude classified it as acquisition,
             # always. If no Claude, fall back to keyword-only (lower confidence).
@@ -954,12 +931,16 @@ async def scan_overname_signals(
         "message": (
             f"Gepolld {len(_RSS_SOURCES)} feeds, {processed} items, "
             f"{relevant} keyword-matches, {created} signalen geregistreerd"
-            + (f" ({classified_yes} door Claude bevestigd)" if classifier_used else " (keyword-only)")
+            + (
+                f" ({classified_yes} door {classifier_provider or 'AI'} bevestigd)"
+                if classifier_used else " (keyword-only)"
+            )
             + (f", {skipped_dup} duplicaten overgeslagen." if skipped_dup else ".")
         ),
         "details": {
             "feeds": [s[0] for s in _RSS_SOURCES],
-            "claude_classifier": classifier_used,
+            "classifier_used": classifier_used,
+            "classifier_provider": classifier_provider,
             "duplicates_skipped": skipped_dup,
         },
     }

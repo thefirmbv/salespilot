@@ -61,12 +61,23 @@ const KINDS: Record<string, KindMeta> = {
   },
   anthropic: {
     label: "Anthropic (Claude)",
-    description: "Used by the AI Callscript generator on the prospect detail page.",
+    description: "AI-classifier voor de overname-monitor + callscript-generatie. Vereist API key + losse credits (apart van OpenAI).",
     docsUrl: "https://console.anthropic.com/settings/keys",
     supportsSync: false,
     fields: [
       { name: "api_key", label: "API key", type: "password", secret: true, required: true, help: "Stored encrypted. Leave blank to keep existing." },
-      { name: "model", label: "Model", placeholder: "claude-sonnet-4-5-20250929" },
+      { name: "model", label: "Model", placeholder: "claude-haiku-4-5-20251001" },
+    ],
+  },
+  openai: {
+    label: "OpenAI (GPT)",
+    description: "AI-classifier en tekst-generatie via OpenAI. Aanbevolen voor IT-gemak: jullie hebben al een OpenAI-account zonder losse credit-tracking.",
+    docsUrl: "https://platform.openai.com/api-keys",
+    supportsSync: false,
+    fields: [
+      { name: "api_key", label: "API key", type: "password", secret: true, required: true, help: "Begint met sk-... Stored encrypted. Leave blank to keep existing." },
+      { name: "model", label: "Model", placeholder: "gpt-4o-mini", help: "gpt-4o-mini is goedkoop + snel; gpt-4o voor zwaardere classificatie." },
+      { name: "base_url", label: "Base URL (optioneel)", placeholder: "https://api.openai.com/v1", help: "Alleen wijzigen als je een Azure OpenAI of OpenAI-compatible proxy gebruikt." },
     ],
   },
   mailgun: {
@@ -686,6 +697,89 @@ function WespennestSettingsBlock({
         <div className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-900">
           <strong>Tip:</strong> klik <strong>Save</strong> hieronder om de keuze te bewaren. Wespennest pakt het nieuwe gedrag op bij de eerstvolgende scan-tick (binnen 4 uur, of direct via een handmatige sync).
         </div>
+      </div>
+
+      <AiClassifierBlock cfg={cfg} form={form} setForm={setForm} />
+    </div>
+  );
+}
+
+function AiClassifierBlock({
+  cfg, form, setForm,
+}: {
+  cfg: Record<string, unknown>;
+  form: Record<string, string>;
+  setForm: (f: Record<string, string>) => void;
+}) {
+  const current = (form.ai_classifier_source as string)
+    ?? (cfg.ai_classifier_source as string)
+    ?? "auto";
+
+  const setSource = (v: string) => {
+    setForm({ ...form, ai_classifier_source: v });
+  };
+
+  const options: { value: string; title: string; desc: string; tone: string }[] = [
+    {
+      value: "auto",
+      title: "Automatisch (aanbevolen)",
+      desc: "Gebruikt OpenAI als die geconfigureerd is, anders Anthropic. Beide aan: OpenAI eerst.",
+      tone: "border-brand-500 bg-brand-50",
+    },
+    {
+      value: "openai",
+      title: "OpenAI eerst",
+      desc: "Forceert OpenAI als primair; Anthropic alleen bij OpenAI-fouten.",
+      tone: "border-emerald-500 bg-emerald-50",
+    },
+    {
+      value: "anthropic",
+      title: "Anthropic (Claude) eerst",
+      desc: "Forceert Claude als primair; OpenAI alleen bij Claude-fouten.",
+      tone: "border-violet-500 bg-violet-50",
+    },
+    {
+      value: "off",
+      title: "Uit",
+      desc: "Geen AI. Overname-monitor valt terug op keyword-filtering zonder semantische analyse.",
+      tone: "border-slate-400 bg-slate-100",
+    },
+  ];
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-3">
+      <div>
+        <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">AI-classifier bron</div>
+        <div className="text-xs text-slate-500 mt-1">
+          Welke AI gebruikt Wespennest voor de overname-monitor en toekomstige features (LinkedIn AI-content, callscripts).
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {options.map((opt) => {
+          const active = current === opt.value;
+          return (
+            <label
+              key={opt.value}
+              className={`flex items-start gap-3 rounded-md border-2 p-3 cursor-pointer transition ${
+                active ? opt.tone : "border-slate-200 bg-white hover:border-slate-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="ai_classifier_source"
+                value={opt.value}
+                checked={active}
+                onChange={() => setSource(opt.value)}
+                className="mt-1 h-4 w-4 accent-brand-500"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-medium">{opt.title}</div>
+                <div className="text-xs text-slate-600 mt-0.5">{opt.desc}</div>
+              </div>
+            </label>
+          );
+        })}
       </div>
     </div>
   );
