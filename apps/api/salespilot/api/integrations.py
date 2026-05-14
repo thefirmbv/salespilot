@@ -640,6 +640,88 @@ async def test_anthropic(auth: CurrentAuth, db: Db) -> TestConnectionResult:
     return TestConnectionResult(ok=True, detail="API key is valid.", token_present=True)
 
 
+@router.post(f"/{OPENAI_KIND}/test", response_model=TestConnectionResult)
+async def test_openai(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    """Verify the OpenAI API key + model + base_url combination.
+
+    We do a minimal chat-completion ('reply with the word ping') against
+    the configured model. Response status maps to actionable Dutch errors:
+      * 401 -> 'API key fout of verlopen'
+      * 404 with model in body -> 'Model niet beschikbaar voor deze key'
+      * 429 -> 'Rate limit / no credits'
+      * other 4xx/5xx -> raw error text trimmed to 200 chars
+    """
+    row = await _get_integration(db, OPENAI_KIND)
+    if row is None:
+        raise HTTPException(status_code=400, detail="OpenAI niet geconfigureerd")
+    cfg = row.config_json or {}
+    api_key = cfg.get("api_key", "")
+    if not api_key:
+        return TestConnectionResult(ok=False, detail="API key is leeg.", token_present=False)
+    base_url = (cfg.get("base_url") or "https://api.openai.com/v1").rstrip("/")
+    model = cfg.get("model") or "gpt-4o-mini"
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "Reply with the word ping"}],
+                    "max_tokens": 4,
+                    "temperature": 0,
+                },
+            )
+    except httpx.HTTPError as e:
+        return TestConnectionResult(
+            ok=False, token_present=True,
+            detail=f"OpenAI niet bereikbaar: {str(e)[:150]}",
+        )
+    if res.status_code == 401:
+        return TestConnectionResult(
+            ok=False, token_present=True,
+            detail="API key fout of verlopen. Maak een nieuwe aan op platform.openai.com/api-keys.",
+        )
+    if res.status_code == 429:
+        return TestConnectionResult(
+            ok=False, token_present=True,
+            detail="Rate-limit of geen credits/quota. Check je OpenAI-account.",
+        )
+    if res.status_code == 404:
+        # Often "model not found" -- key is valid but model isn't accessible
+        body_lc = res.text.lower()
+        if "model" in body_lc:
+            return TestConnectionResult(
+                ok=False, token_present=True,
+                detail=f"Model '{model}' niet beschikbaar voor deze key. Probeer 'gpt-4o-mini' of 'gpt-4o'.",
+            )
+        return TestConnectionResult(
+            ok=False, token_present=True,
+            detail=f"OpenAI gaf 404: {res.text[:200]}",
+        )
+    if res.status_code >= 400:
+        # Try to surface OpenAI's error.message for clarity
+        msg = res.text[:200]
+        try:
+            j = res.json()
+            err = (j.get("error") or {}).get("message") or msg
+            msg = err[:200]
+        except Exception:  # noqa: BLE001
+            pass
+        return TestConnectionResult(
+            ok=False, token_present=True,
+            detail=f"OpenAI gaf {res.status_code}: {msg}",
+        )
+    return TestConnectionResult(
+        ok=True, token_present=True,
+        detail=f"API key + model '{model}' werken. Verbinding OK.",
+    )
+
+
 # ---- Company-scoped routes ----
 
 
