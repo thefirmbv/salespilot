@@ -599,6 +599,9 @@ async def discover_customers_for_msp(
         methods=payload.methods,
         candidate_domains=payload.candidate_domains,
         max_per_method=payload.max_per_method,
+        # Context for AI-powered methods (website / press / linkedin)
+        db=db, org_id=auth.org_id,
+        msp_name=msp.name, msp_website=msp.website,
     )
 
     # Mark which candidates already live in wn_domains so the UI can

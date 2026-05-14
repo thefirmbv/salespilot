@@ -862,21 +862,43 @@ type DiscoveryResult = {
   detail: string | null;
 };
 
-const DISCOVERY_METHODS: { id: string; label: string; help: string; default: boolean; needsCandidates?: boolean }[] = [
-  { id: "crtsh_subdomains", label: "Certificate Transparency — subdomains",
+const DISCOVERY_METHODS: { id: string; label: string; help: string; default: boolean; needsCandidates?: boolean; group: string; disabled?: boolean; disabledReason?: string }[] = [
+  // ---- CT logs ----
+  { id: "crtsh_subdomains", group: "Certificate Transparency",
+    label: "CT — subdomains",
     help: "Vindt subdomains onder <msp>.nl uit CT-logs (Certspotter). Toont klant-portalen zoals klantbedrijf.portal.<msp>.nl.",
     default: true },
-  { id: "crtsh_san", label: "Certificate Transparency — gedeelde certs",
+  { id: "crtsh_san", group: "Certificate Transparency",
+    label: "CT — gedeelde certs",
     help: "Vindt apex-domeinen die op dezelfde TLS-certificaten staan als het MSP. Ruwer maar soms verrassend.",
     default: true },
-  { id: "mx_lookup", label: "DNS MX — wijst naar MSP-mailserver",
-    help: "Voor een lijst kandidaat-domeinen: check welke MX-records wijzen naar mail.<msp>.nl. Sterk signaal maar vereist een seedlijst.",
+
+  // ---- AI-powered (website + press + linkedin) ----
+  { id: "msp_website_crawl", group: "AI-extractie",
+    label: "Website-crawl — klantenpagina",
+    help: "Bezoekt de MSP-website, vindt 'Klanten/Cases/Referenties' pagina's, en gebruikt AI om de klantnamen te extraheren uit logo-alts en headings.",
+    default: true },
+  { id: "msp_press_archive", group: "AI-extractie",
+    label: "Persbericht-archief",
+    help: "Pakt elk overname-artikel waarin dit MSP voorkomt, en laat AI klant-mentions extraheren met evidence-quote. Werkt alleen als er overname-signalen voor dit MSP zijn.",
+    default: true },
+  { id: "msp_linkedin_official", group: "AI-extractie",
+    label: "LinkedIn — Marketing API",
+    help: "Klant-aankondigingen via LinkedIn Organization Posts. Vereist Marketing Developer Platform-toegang.",
+    default: false, disabled: true, disabledReason: "Wacht op LinkedIn Marketing Developer Platform approval (~2-3 weken)" },
+
+  // ---- DNS-based (need seed list) ----
+  { id: "mx_lookup", group: "DNS-records (vereist seedlijst)",
+    label: "DNS MX — wijst naar MSP-mailserver",
+    help: "Voor een lijst kandidaat-domeinen: check welke MX-records wijzen naar mail.<msp>.nl. Sterk signaal.",
     default: false, needsCandidates: true },
-  { id: "spf_include", label: "DNS SPF — bevat MSP-include",
+  { id: "spf_include", group: "DNS-records (vereist seedlijst)",
+    label: "DNS SPF — bevat MSP-include",
     help: "Voor een lijst kandidaat-domeinen: check welke SPF-records include:<msp>.nl bevatten. Sterk signaal.",
     default: false, needsCandidates: true },
-  { id: "reseller_substring", label: "Reseller-naam in domein",
-    help: "Matcht het MSP als substring in domeinnamen, voor white-label resellers (klantbedrijf-<msp>.nl).",
+  { id: "reseller_substring", group: "DNS-records (vereist seedlijst)",
+    label: "Reseller-naam in domein",
+    help: "Matcht het MSP als substring in domeinnamen, voor white-label resellers.",
     default: false, needsCandidates: true },
 ];
 
@@ -977,21 +999,39 @@ function DiscoveryTab() {
           <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">
             Zoek-methoden
           </div>
-          <div className="space-y-2">
-            {DISCOVERY_METHODS.map(m => (
-              <label key={m.id} className="flex items-start gap-3 rounded-md border border-slate-200 bg-white p-2.5 cursor-pointer hover:border-slate-300">
-                <input type="checkbox"
-                  checked={methods[m.id] ?? false}
-                  onChange={(e) => setMethods(prev => ({...prev, [m.id]: e.target.checked}))}
-                  className="mt-0.5 h-4 w-4 accent-brand-500" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-2 flex-wrap">
-                    <span className="text-sm font-medium">{m.label}</span>
-                    {m.needsCandidates && <span className="text-[10px] uppercase tracking-wider text-amber-700">vereist seed-lijst</span>}
-                  </div>
-                  <div className="text-xs text-slate-600 mt-0.5">{m.help}</div>
+          <div className="space-y-4">
+            {Array.from(new Set(DISCOVERY_METHODS.map(m => m.group))).map(group => (
+              <div key={group}>
+                <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">{group}</div>
+                <div className="space-y-2">
+                  {DISCOVERY_METHODS.filter(m => m.group === group).map(m => (
+                    <label key={m.id}
+                      title={m.disabled ? m.disabledReason : ""}
+                      className={`flex items-start gap-3 rounded-md border bg-white p-2.5 ${
+                        m.disabled
+                          ? "border-slate-200 opacity-60 cursor-not-allowed"
+                          : "border-slate-200 cursor-pointer hover:border-slate-300"
+                      }`}>
+                      <input type="checkbox"
+                        checked={methods[m.id] ?? false}
+                        disabled={m.disabled}
+                        onChange={(e) => setMethods(prev => ({...prev, [m.id]: e.target.checked}))}
+                        className="mt-0.5 h-4 w-4 accent-brand-500" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <span className="text-sm font-medium">{m.label}</span>
+                          {m.needsCandidates && <span className="text-[10px] uppercase tracking-wider text-amber-700">vereist seed-lijst</span>}
+                          {m.disabled && <span className="text-[10px] uppercase tracking-wider text-slate-500">binnenkort</span>}
+                        </div>
+                        <div className="text-xs text-slate-600 mt-0.5">{m.help}</div>
+                        {m.disabled && m.disabledReason && (
+                          <div className="text-[11px] text-slate-500 italic mt-0.5">{m.disabledReason}</div>
+                        )}
+                      </div>
+                    </label>
+                  ))}
                 </div>
-              </label>
+              </div>
             ))}
           </div>
         </div>

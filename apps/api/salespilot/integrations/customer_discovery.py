@@ -52,6 +52,8 @@ from typing import Iterable
 from urllib.parse import quote
 
 import httpx
+from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 log = logging.getLogger(__name__)
@@ -405,12 +407,24 @@ async def run_customer_discovery(
     methods: list[str],
     candidate_domains: Iterable[str] | None = None,
     max_per_method: int = 100,
+    # Context for AI-powered methods (website crawl, press archive,
+    # LinkedIn official). When omitted, those methods are skipped.
+    db: "AsyncSession | None" = None,
+    org_id: "UUID | None" = None,
+    msp_name: str | None = None,
+    msp_website: str | None = None,
 ) -> list[CustomerCandidate]:
     """Run all enabled methods in parallel and return a merged candidate list.
 
-    `candidate_domains` is only needed for the DNS-based methods
-    (mx_lookup / spf_include / reseller_substring); the crt.sh methods
-    don't need it. Pass None or an empty list to skip DNS methods.
+    Method matrix:
+      crtsh_subdomains, crtsh_san     -- CT logs (no extra context needed)
+      mx_lookup, spf_include,
+      reseller_substring              -- DNS (need candidate_domains)
+      msp_website_crawl,
+      msp_press_archive,
+      msp_linkedin_official           -- AI-powered (need db + org_id +
+                                         msp_name; website method also
+                                         needs msp_website)
     """
     tasks: list[asyncio.Task[list[CustomerCandidate]]] = []
     if "crtsh_subdomains" in methods:
@@ -436,6 +450,21 @@ async def run_customer_discovery(
                 discover_reseller_substring(msp_apex, cands, max_results=max_per_method),
             ))
 
+    # AI-powered methods -- only run when we have db + org_id + msp_name
+    if db is not None and org_id is not None and msp_name:
+        if "msp_website_crawl" in methods and msp_website:
+            tasks.append(asyncio.create_task(_run_website_crawl(
+                db, org_id, msp_name, msp_website, max_per_method,
+            )))
+        if "msp_press_archive" in methods:
+            tasks.append(asyncio.create_task(_run_press_archive(
+                db, org_id, msp_name, max_per_method,
+            )))
+        if "msp_linkedin_official" in methods:
+            tasks.append(asyncio.create_task(_run_linkedin_official(
+                db, org_id, msp_name, msp_website, max_per_method,
+            )))
+
     if not tasks:
         return []
     results: list[CustomerCandidate] = []
@@ -446,10 +475,104 @@ async def run_customer_discovery(
         results.extend(task)
 
     # Deduplicate -- same domain across multiple methods keeps the highest
-    # confidence. We also concatenate evidence so the UI can show all.
+    # confidence.
     best: dict[str, CustomerCandidate] = {}
     for c in results:
         existing = best.get(c.domain)
         if existing is None or c.confidence > existing.confidence:
             best[c.domain] = c
     return sorted(best.values(), key=lambda c: -c.confidence)
+
+
+# ---------------------------------------------------------------------
+# Adapters around the AI-powered methods so the orchestrator gets
+# uniform CustomerCandidate output
+# ---------------------------------------------------------------------
+
+
+async def _run_website_crawl(
+    db, org_id, msp_name: str, msp_website: str, max_results: int,
+) -> list[CustomerCandidate]:
+    from salespilot.integrations.msp_intel.website_crawler import (
+        crawl_msp_website,
+    )
+    try:
+        hits = await crawl_msp_website(
+            db=db, org_id=org_id, msp_name=msp_name,
+            msp_website=msp_website, max_results=max_results,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("website crawl failed: %s", e)
+        return []
+    out: list[CustomerCandidate] = []
+    for h in hits:
+        # Use the guessed domain when present; else use a synthetic
+        # "company:<name>" pseudo-domain so the UI can still display +
+        # save it. The user can fix the real domain later.
+        domain = h.domain or f"company:{h.name.lower().replace(' ', '-')[:50]}"
+        out.append(CustomerCandidate(
+            domain=domain,
+            method="msp_website_crawl",
+            evidence=f"Genoemd op {h.source_url}",
+            confidence=h.confidence,
+        ))
+    return out
+
+
+async def _run_press_archive(
+    db, org_id, msp_name: str, max_results: int,
+) -> list[CustomerCandidate]:
+    from salespilot.integrations.msp_intel.press_archive import (
+        crawl_msp_press_archive,
+    )
+    try:
+        hits = await crawl_msp_press_archive(
+            db=db, org_id=org_id, msp_name=msp_name, max_results=max_results,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("press archive failed: %s", e)
+        return []
+    out: list[CustomerCandidate] = []
+    for h in hits:
+        # Press articles rarely give us a clean domain; use a slug guess
+        slug = (h.name or "").lower()
+        # Same simple slug logic as website crawler
+        import re as _re
+        slug = _re.sub(r"\b(b\.?v\.?|n\.?v\.?|holding|group|nederland|bv|nv)\b\.?", "", slug)
+        slug = _re.sub(r"[^a-z0-9]+", "", slug)
+        domain = f"{slug}.nl" if 3 <= len(slug) <= 40 else f"company:{slug[:50]}"
+        out.append(CustomerCandidate(
+            domain=domain,
+            method="msp_press_archive",
+            evidence=(
+                f"Genoemd in {h.source_title or 'persbericht'}: "
+                f"{(h.evidence_quote or '')[:160]}"
+            ),
+            confidence=h.confidence,
+        ))
+    return out
+
+
+async def _run_linkedin_official(
+    db, org_id, msp_name: str, msp_website: str | None, max_results: int,
+) -> list[CustomerCandidate]:
+    from salespilot.integrations.msp_intel.linkedin_official import (
+        crawl_msp_linkedin_official,
+    )
+    try:
+        hits = await crawl_msp_linkedin_official(
+            db=db, org_id=org_id, msp_name=msp_name,
+            msp_website=msp_website, max_results=max_results,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("linkedin official failed: %s", e)
+        return []
+    out: list[CustomerCandidate] = []
+    for h in hits:
+        out.append(CustomerCandidate(
+            domain=f"linkedin:{h.name.lower().replace(' ', '-')[:50]}",
+            method="msp_linkedin_official",
+            evidence=f"LinkedIn post: {(h.evidence_quote or '')[:160]}",
+            confidence=h.confidence,
+        ))
+    return out
