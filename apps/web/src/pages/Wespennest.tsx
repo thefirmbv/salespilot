@@ -131,7 +131,7 @@ export function Wespennest() {
           </div>
         </div>
         <div className="flex gap-1 border-b border-slate-200 px-4">
-          {[["dashboard","Dashboard"],["leads","Leads"],["msps","MSP\u2019s"],["feed","Overname-feed"],["pipeline","Pipeline"]].map(([id, label]) => (
+          {[["dashboard","Dashboard"],["leads","Leads"],["msps","MSP\u2019s"],["discovery","Klanten zoeken"],["feed","Overname-feed"],["pipeline","Pipeline"]].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${tab === id ? "border-brand-500 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
               {label}
@@ -142,6 +142,7 @@ export function Wespennest() {
           {tab === "dashboard" && <DashboardTab />}
           {tab === "leads" && <LeadsTab />}
           {tab === "msps" && <MspsTab />}
+          {tab === "discovery" && <DiscoveryTab />}
           {tab === "feed" && <FeedTab />}
           {tab === "pipeline" && <PipelineTab />}
         </div>
@@ -832,6 +833,249 @@ function WespennestReadiness() {
           ))}
         </ul>
       </div>
+    </div>
+  );
+}
+
+// ===== Customer Discovery tab =====
+// Find end-customers of an acquired MSP via CT logs + DNS. The user
+// picks an MSP from the list, ticks which methods to run, presses
+// 'Zoek eindklanten', reviews the candidate domains, and saves the
+// real ones into wn_domains for the regular Wespennest pipeline.
+
+type CustomerCandidate = {
+  domain: string;
+  method: string;
+  evidence: string;
+  confidence: number;
+  status: "candidate" | "saved" | "rejected";
+  existing_domain_id: string | null;
+};
+
+type DiscoveryResult = {
+  ok: boolean;
+  msp_id: string;
+  msp_name: string;
+  msp_apex: string | null;
+  methods_run: string[];
+  candidates: CustomerCandidate[];
+  detail: string | null;
+};
+
+const DISCOVERY_METHODS: { id: string; label: string; help: string; default: boolean; needsCandidates?: boolean }[] = [
+  { id: "crtsh_subdomains", label: "Certificate Transparency — subdomains",
+    help: "Vindt subdomains onder <msp>.nl uit CT-logs (Certspotter). Toont klant-portalen zoals klantbedrijf.portal.<msp>.nl.",
+    default: true },
+  { id: "crtsh_san", label: "Certificate Transparency — gedeelde certs",
+    help: "Vindt apex-domeinen die op dezelfde TLS-certificaten staan als het MSP. Ruwer maar soms verrassend.",
+    default: true },
+  { id: "mx_lookup", label: "DNS MX — wijst naar MSP-mailserver",
+    help: "Voor een lijst kandidaat-domeinen: check welke MX-records wijzen naar mail.<msp>.nl. Sterk signaal maar vereist een seedlijst.",
+    default: false, needsCandidates: true },
+  { id: "spf_include", label: "DNS SPF — bevat MSP-include",
+    help: "Voor een lijst kandidaat-domeinen: check welke SPF-records include:<msp>.nl bevatten. Sterk signaal.",
+    default: false, needsCandidates: true },
+  { id: "reseller_substring", label: "Reseller-naam in domein",
+    help: "Matcht het MSP als substring in domeinnamen, voor white-label resellers (klantbedrijf-<msp>.nl).",
+    default: false, needsCandidates: true },
+];
+
+function DiscoveryTab() {
+  const qc = useQueryClient();
+  const mspsQ = useQuery<Msp[]>({
+    queryKey: ["/wespennest/msps"],
+    queryFn: () => api<Msp[]>("/wespennest/msps"),
+  });
+  const [selectedMspId, setSelectedMspId] = useState<string>("");
+  const [methods, setMethods] = useState<Record<string, boolean>>(
+    Object.fromEntries(DISCOVERY_METHODS.map(m => [m.id, m.default])),
+  );
+  const [candidateDomainsText, setCandidateDomainsText] = useState("");
+  const [results, setResults] = useState<DiscoveryResult | null>(null);
+  const [selectedToSave, setSelectedToSave] = useState<Set<string>>(new Set());
+
+  const discoverMut = useMutation({
+    mutationFn: async (): Promise<DiscoveryResult> => {
+      const activeMethods = Object.entries(methods).filter(([_, v]) => v).map(([k]) => k);
+      const cands = candidateDomainsText
+        .split(/[\s,;\n]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+      return api<DiscoveryResult>(
+        `/wespennest/msps/${selectedMspId}/discover-customers`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            methods: activeMethods,
+            candidate_domains: cands.length > 0 ? cands : null,
+            max_per_method: 100,
+          }),
+        },
+      );
+    },
+    onSuccess: (r) => {
+      setResults(r);
+      // Auto-select candidates with confidence >= 55 as a sensible default
+      setSelectedToSave(new Set(
+        r.candidates.filter(c => c.confidence >= 55 && c.status === "candidate").map(c => c.domain)
+      ));
+    },
+  });
+
+  const saveMut = useMutation({
+    mutationFn: () => api(`/wespennest/msps/${selectedMspId}/save-customer-domains`, {
+      method: "POST",
+      body: JSON.stringify({
+        domains: Array.from(selectedToSave),
+        discovery_method: results?.methods_run[0] ?? "crtsh_subdomains",
+      }),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/wespennest"] });
+      setResults(null);
+      setSelectedToSave(new Set());
+    },
+  });
+
+  const toggleDomain = (d: string) => {
+    setSelectedToSave(prev => {
+      const next = new Set(prev);
+      if (next.has(d)) next.delete(d); else next.add(d);
+      return next;
+    });
+  };
+
+  const someNeedsCandidates = DISCOVERY_METHODS
+    .filter(m => methods[m.id] && m.needsCandidates).length > 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+        Eindklanten van overgenomen MSP&apos;s zitten in een &laquo;twijfel-window&raquo; na de overname.
+        Hier vind je ze via Certificate Transparency logs en DNS-records. Resultaten review je
+        hieronder en sla je op zodat ze in de leads-pipeline meedraaien.
+      </div>
+
+      <div className="rounded-lg bg-white ring-1 ring-slate-200 p-4 space-y-4">
+        <div>
+          <label className="block text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">
+            Overgenomen MSP
+          </label>
+          <select
+            value={selectedMspId}
+            onChange={(e) => { setSelectedMspId(e.target.value); setResults(null); }}
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            <option value="">— kies een MSP —</option>
+            {mspsQ.data?.map(m => (
+              <option key={m.id} value={m.id}>
+                {m.name}{m.acquired_by ? ` (overgenomen door ${m.acquired_by})` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">
+            Zoek-methoden
+          </div>
+          <div className="space-y-2">
+            {DISCOVERY_METHODS.map(m => (
+              <label key={m.id} className="flex items-start gap-3 rounded-md border border-slate-200 bg-white p-2.5 cursor-pointer hover:border-slate-300">
+                <input type="checkbox"
+                  checked={methods[m.id] ?? false}
+                  onChange={(e) => setMethods(prev => ({...prev, [m.id]: e.target.checked}))}
+                  className="mt-0.5 h-4 w-4 accent-brand-500" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-sm font-medium">{m.label}</span>
+                    {m.needsCandidates && <span className="text-[10px] uppercase tracking-wider text-amber-700">vereist seed-lijst</span>}
+                  </div>
+                  <div className="text-xs text-slate-600 mt-0.5">{m.help}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {someNeedsCandidates && (
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">
+              Kandidaat-domeinen (één per regel)
+            </label>
+            <textarea
+              value={candidateDomainsText}
+              onChange={(e) => setCandidateDomainsText(e.target.value)}
+              rows={6}
+              placeholder="klant1.nl&#10;klant2.nl&#10;..."
+              className="w-full font-mono text-xs rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            <div className="text-xs text-slate-500 mt-1">Vereist voor MX/SPF/Reseller-substring methodes.</div>
+          </div>
+        )}
+
+        <button
+          onClick={() => discoverMut.mutate()}
+          disabled={!selectedMspId || discoverMut.isPending}
+          className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+        >
+          {discoverMut.isPending ? "Bezig met zoeken…" : "Zoek eindklanten"}
+        </button>
+
+        {discoverMut.error && (
+          <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+            {discoverMut.error instanceof Error ? discoverMut.error.message : "Er ging iets mis."}
+          </div>
+        )}
+      </div>
+
+      {results && (
+        <div className="rounded-lg bg-white ring-1 ring-slate-200">
+          <div className="border-b border-slate-200 px-4 py-3 flex items-baseline justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="font-medium">{results.candidates.length} kandidaten voor {results.msp_name}</h3>
+              <div className="text-xs text-slate-500 mt-0.5">{results.detail}{results.msp_apex && <> · apex: <code className="font-mono">{results.msp_apex}</code></>}</div>
+            </div>
+            {selectedToSave.size > 0 && (
+              <button
+                onClick={() => saveMut.mutate()}
+                disabled={saveMut.isPending}
+                className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {saveMut.isPending ? "Opslaan…" : `Bewaar ${selectedToSave.size} geselecteerd`}
+              </button>
+            )}
+          </div>
+          {results.candidates.length === 0 ? (
+            <div className="p-8 text-center text-sm text-slate-500">
+              Geen kandidaten gevonden. Probeer een andere methode of MSP.
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
+              {results.candidates.map(c => (
+                <li key={c.domain} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
+                  <input type="checkbox"
+                    checked={selectedToSave.has(c.domain)}
+                    disabled={c.status === "saved"}
+                    onChange={() => toggleDomain(c.domain)}
+                    className="h-4 w-4 accent-brand-500" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <code className="font-mono text-sm truncate">{c.domain}</code>
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">{c.method}</span>
+                      {c.status === "saved" && (
+                        <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">al opgeslagen</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5 truncate">{c.evidence}</div>
+                  </div>
+                  <div className={`shrink-0 text-xs tabular-nums font-medium ${
+                    c.confidence >= 70 ? "text-emerald-700" :
+                    c.confidence >= 50 ? "text-amber-700" : "text-slate-500"
+                  }`}>{c.confidence}%</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

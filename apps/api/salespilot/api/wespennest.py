@@ -19,6 +19,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 
 from salespilot.deps import CurrentAuth, Db
@@ -519,3 +520,180 @@ async def trigger_pipeline_job(
         job_kind=job_kind,
         run_id=run.id,
     )
+
+
+# ----------------------------------------------------------------------
+# Customer discovery -- find end-customers of acquired MSPs via CT logs
+# and DNS records. Per-MSP, opt-in methods, manual confirm/reject.
+# ----------------------------------------------------------------------
+
+
+class CustomerDiscoveryRequest(BaseModel):
+    """POST /wespennest/msps/{msp_id}/discover-customers body."""
+    methods: list[str] = Field(
+        default_factory=lambda: ["crtsh_subdomains", "crtsh_san"],
+        description="Subset of: crtsh_subdomains, crtsh_san, mx_lookup, "
+                    "spf_include, reseller_substring",
+    )
+    candidate_domains: list[str] | None = Field(
+        default=None,
+        description="Required for DNS-based methods (mx/spf/reseller). "
+                    "Pass a list of apex domains to test against.",
+    )
+    max_per_method: int = Field(default=100, ge=10, le=500)
+
+
+class CustomerCandidatePublic(BaseModel):
+    """One row returned by the discovery scanner."""
+    domain: str
+    method: str
+    evidence: str
+    confidence: int
+    status: str = "candidate"  # candidate | saved | rejected
+    existing_domain_id: UUID | None = None
+
+
+class CustomerDiscoveryResult(BaseModel):
+    ok: bool
+    msp_id: UUID
+    msp_name: str
+    msp_apex: str | None = None
+    methods_run: list[str]
+    candidates: list[CustomerCandidatePublic]
+    detail: str | None = None
+
+
+@router.post(
+    "/msps/{msp_id}/discover-customers",
+    response_model=CustomerDiscoveryResult,
+)
+async def discover_customers_for_msp(
+    msp_id: UUID, payload: CustomerDiscoveryRequest,
+    auth: CurrentAuth, db: Db,
+) -> CustomerDiscoveryResult:
+    """Run customer-discovery methods against an MSP and return candidates.
+
+    We deliberately DO NOT auto-save to wn_domains -- the user reviews
+    the candidates first and explicitly saves the ones that look real
+    via POST /msps/{msp_id}/save-customer-domains. This avoids polluting
+    the leads pipeline with false positives.
+    """
+    from salespilot.integrations.customer_discovery import (
+        _msp_apex, run_customer_discovery,
+    )
+
+    msp = await db.get(WnMsp, msp_id)
+    if msp is None or msp.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="msp not found")
+
+    apex = _msp_apex(msp.website, msp.name)
+    if apex is None:
+        return CustomerDiscoveryResult(
+            ok=False, msp_id=msp_id, msp_name=msp.name,
+            msp_apex=None, methods_run=[], candidates=[],
+            detail="Geen apex-domein af te leiden uit naam of website",
+        )
+
+    candidates = await run_customer_discovery(
+        msp_apex=apex,
+        methods=payload.methods,
+        candidate_domains=payload.candidate_domains,
+        max_per_method=payload.max_per_method,
+    )
+
+    # Mark which candidates already live in wn_domains so the UI can
+    # show 'al opgeslagen' badges
+    existing_rows = (
+        await db.execute(
+            select(WnDomain).where(WnDomain.domain.in_([c.domain for c in candidates]))
+        )
+    ).scalars().all()
+    existing_by_domain = {r.domain: r for r in existing_rows}
+
+    out_candidates: list[CustomerCandidatePublic] = []
+    for c in candidates:
+        existing = existing_by_domain.get(c.domain)
+        out_candidates.append(CustomerCandidatePublic(
+            domain=c.domain, method=c.method, evidence=c.evidence,
+            confidence=c.confidence,
+            status="saved" if existing else "candidate",
+            existing_domain_id=existing.id if existing else None,
+        ))
+
+    return CustomerDiscoveryResult(
+        ok=True, msp_id=msp_id, msp_name=msp.name, msp_apex=apex,
+        methods_run=payload.methods, candidates=out_candidates,
+        detail=(
+            f"{len(candidates)} kandidaten gevonden via "
+            f"{', '.join(payload.methods)}"
+        ),
+    )
+
+
+class SaveCustomerDomainsRequest(BaseModel):
+    domains: list[str] = Field(min_length=1, max_length=500)
+    discovery_method: str = Field(
+        default="crtsh_subdomains",
+        description="Annotated on the saved wn_domains row for traceability",
+    )
+
+
+@router.post("/msps/{msp_id}/save-customer-domains")
+async def save_customer_domains(
+    msp_id: UUID, payload: SaveCustomerDomainsRequest,
+    auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    """Persist a subset of customer candidates into wn_domains.
+
+    Idempotent: existing (org_id, domain) rows are kept. discovery_source
+    is set to 'msp:<msp_id>:<method>' so we can later filter the leads
+    page by 'customers of MSP X'.
+    """
+    msp = await db.get(WnMsp, msp_id)
+    if msp is None or msp.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="msp not found")
+
+    # discovery_source is varchar(40), so we keep the tag short:
+    # 'msp:<first-8-hex>:<short-method>'. Full link is via the domain
+    # appearing in this MSP's discover-customers result anyway.
+    msp_short = str(msp_id)[:8]
+    method_short = {
+        "crtsh_subdomains": "crt-sub",
+        "crtsh_san": "crt-san",
+        "mx_lookup": "mx",
+        "spf_include": "spf",
+        "reseller_substring": "name",
+    }.get(payload.discovery_method, payload.discovery_method[:10])
+    source_tag = f"msp:{msp_short}:{method_short}"  # e.g. 'msp:00387f38:crt-sub' = 22 chars
+    now = datetime.now(UTC)
+    created = 0
+    skipped = 0
+
+    existing_rows = (
+        await db.execute(
+            select(WnDomain.domain).where(
+                WnDomain.org_id == auth.org_id,
+                WnDomain.domain.in_(payload.domains),
+            )
+        )
+    ).scalars().all()
+    existing_set = set(existing_rows)
+
+    for d in payload.domains:
+        d_clean = (d or "").strip().lower()
+        if not d_clean or "." not in d_clean:
+            continue
+        if d_clean in existing_set:
+            skipped += 1
+            continue
+        db.add(WnDomain(
+            id=uuid4(), org_id=auth.org_id, domain=d_clean,
+            discovery_source=source_tag, first_seen=now,
+            status="pending", created_at=now, updated_at=now,
+        ))
+        created += 1
+    await db.flush()
+    return {
+        "ok": True, "created": created, "skipped": skipped,
+        "msp": msp.name, "source_tag": source_tag,
+    }
