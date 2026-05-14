@@ -450,30 +450,48 @@ class CrtShClient:
 class KvkSourceRouter:
     """Pick the right Dutch chamber-of-commerce source for this org.
 
-    Priority is fixed: OpenKVK first (free, sufficient for our scale),
-    and the official KVK API as automatic fallback IF the user has it
-    configured AND enabled. If only one is configured/enabled, we use
-    that one. If neither, we still construct an unauthenticated
-    OpenKVK client so the pipeline keeps working (rate-limited).
+    The org can express a preference via the 'wespennest' integration
+    with primary_kvk_source set to "openkvk", "kvk", or "auto":
+      * "openkvk" -> always try OpenKVK first, KVK as fallback
+      * "kvk"     -> always try official KVK first, OpenKVK as fallback
+      * "auto"    -> prefer official KVK if both configured; else what's
+                     available. This is the smart default.
+
+    When only one source is configured/enabled we use that one regardless
+    of the preference. If neither is enabled, we still construct an
+    unauthenticated OpenKVK client so the pipeline keeps working (rate-
+    limited).
 
     `from_org(db, org_id)` is the canonical constructor.
     """
 
     openkvk: OpenKvkClient | None = None
     kvk: KvkClient | None = None
+    # "openkvk" | "kvk" | "auto"  -- which one to try first.
+    primary_source: str = "auto"
 
     @classmethod
     async def from_org(cls, db: AsyncSession, org_id: Any) -> "KvkSourceRouter":
         rows = (
             await db.execute(
-                select(Integration).where(Integration.kind.in_(["openkvk", "kvk"]))
+                select(Integration).where(
+                    Integration.kind.in_(["openkvk", "kvk", "wespennest"])
+                )
             )
         ).scalars().all()
 
         openkvk: OpenKvkClient | None = None
         kvk: KvkClient | None = None
+        primary = "auto"
         for r in rows:
             cfg = r.config_json or {}
+            if r.kind == "wespennest":
+                # Even when this integration row is disabled we still read
+                # the preference -- it's a setting, not a credential.
+                primary = (cfg.get("primary_kvk_source") or "auto").lower()
+                if primary not in ("openkvk", "kvk", "auto"):
+                    primary = "auto"
+                continue
             if not r.is_enabled:
                 continue
             if r.kind == "openkvk":
@@ -493,45 +511,73 @@ class KvkSourceRouter:
         if openkvk is None and kvk is None:
             openkvk = OpenKvkClient()
 
-        return cls(openkvk=openkvk, kvk=kvk)
+        return cls(openkvk=openkvk, kvk=kvk, primary_source=primary)
+
+    def _order(self) -> list[str]:
+        """Return the source names in the order to try them.
+
+        Filters out sources that aren't configured. Respects user
+        preference; falls through to whatever's available.
+        """
+        available: list[str] = []
+        if self.openkvk is not None:
+            available.append("openkvk")
+        if self.kvk is not None:
+            available.append("kvk")
+
+        if self.primary_source == "openkvk":
+            preferred = ["openkvk", "kvk"]
+        elif self.primary_source == "kvk":
+            preferred = ["kvk", "openkvk"]
+        else:
+            # auto: official KVK first if both configured (it has richer
+            # data), else whatever the user has.
+            if "kvk" in available and "openkvk" in available:
+                preferred = ["kvk", "openkvk"]
+            elif "kvk" in available:
+                preferred = ["kvk"]
+            else:
+                preferred = ["openkvk", "kvk"]
+
+        return [s for s in preferred if s in available]
+
+    def _client(self, source: str):
+        if source == "openkvk":
+            return self.openkvk
+        if source == "kvk":
+            return self.kvk
+        return None
 
     @property
     def primary_label(self) -> str:
-        if self.openkvk is not None:
-            return "openkvk"
-        if self.kvk is not None:
-            return "kvk"
-        return "none"
+        order = self._order()
+        return order[0] if order else "none"
 
     async def lookup_by_kvk(self, kvk_number: str) -> CompanyResult | None:
-        """Try OpenKVK first; on miss/error, fall back to KVK."""
-        if self.openkvk is not None:
+        """Try sources in the user-configured order; first hit wins."""
+        for source in self._order():
+            client = self._client(source)
+            if client is None:
+                continue
             try:
-                hit = await self.openkvk.lookup_by_kvk(kvk_number)
+                hit = await client.lookup_by_kvk(kvk_number)
                 if hit is not None:
                     return hit
             except Exception:
-                pass
-        if self.kvk is not None:
-            try:
-                return await self.kvk.lookup_by_kvk(kvk_number)
-            except Exception:
-                return None
+                continue
         return None
 
     async def search(self, query: str, city: str | None = None, size: int = 20) -> list[CompanyResult]:
-        if self.openkvk is not None:
+        for source in self._order():
+            client = self._client(source)
+            if client is None:
+                continue
             try:
-                hits = await self.openkvk.search(query, city=city, size=size)
+                hits = await client.search(query, city=city, size=size)
                 if hits:
                     return hits
             except Exception:
-                pass
-        if self.kvk is not None:
-            try:
-                return await self.kvk.search(query, city=city, size=size)
-            except Exception:
-                return []
+                continue
         return []
 
     async def list_functionarissen(self, kvk_number: str) -> list[FunctionarisResult]:

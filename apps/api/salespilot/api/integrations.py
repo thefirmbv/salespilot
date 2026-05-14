@@ -77,6 +77,7 @@ APOLLO_KIND = "apollo"
 # Microsoft 365 SSO -- OAuth login + (later) email/calendar sync
 M365_SSO_KIND = "m365_sso"
 PBX_3CX_KIND = "pbx_3cx"
+WESPENNEST_KIND = "wespennest"
 
 
 def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -176,6 +177,11 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
             "base_url": cfg.get("base_url") or "https://api.apollo.io/v1",
             "api_key_set": bool(cfg.get("api_key")),
         }
+    if kind == WESPENNEST_KIND:
+        # Wespennest behavioural preferences.
+        return {
+            "primary_kvk_source": cfg.get("primary_kvk_source") or "auto",
+        }
     if kind == PBX_3CX_KIND:
         return {
             "pbx_fqdn": cfg.get("pbx_fqdn"),
@@ -239,6 +245,8 @@ async def list_integrations(db: Db) -> list[IntegrationSummary]:
         (M365_SSO_KIND, "Microsoft 365 SSO", "Single sign-on via Azure AD. Users met een toegestane email-domein loggen in met hun M365-account."),
         # ---- Telephony ----
         (PBX_3CX_KIND, "3CX telefooncentrale", "Click-to-call vanaf telefoonnummers in het portaal naar je 3CX-toestel."),
+        # ---- Wespennest preferences ----
+        (WESPENNEST_KIND, "Wespennest instellingen", "Kies welke bron als primair gebruikt wordt voor KvK-lookups (OpenKVK gratis vs KVK officieel)."),
     ]
     out: list[IntegrationSummary] = []
     for kind, label, desc in known:
@@ -326,6 +334,7 @@ _make_kind_routes(HUNTER_KIND)
 _make_kind_routes(APOLLO_KIND)
 _make_kind_routes(M365_SSO_KIND)
 _make_kind_routes(PBX_3CX_KIND)
+_make_kind_routes(WESPENNEST_KIND)
 
 
 # ---- HaloPSA test/sync ----

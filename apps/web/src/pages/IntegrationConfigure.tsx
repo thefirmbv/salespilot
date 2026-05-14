@@ -182,6 +182,14 @@ const KINDS: Record<string, KindMeta> = {
     ],
   },
 
+  wespennest: {
+    label: "Wespennest instellingen",
+    description: "Bepaal welke bron Wespennest standaard gebruikt voor KvK-lookups. Handig zolang je nog op de officiële KVK-key wacht of als de bronnen later veranderen.",
+    docsUrl: "",
+    supportsSync: false,
+    fields: [],  // alle UI in het WespennestSettingsBlock hieronder
+  },
+
   pbx_3cx: {
     label: "3CX telefooncentrale",
     description: "Klik op een telefoonnummer in het portaal en bel direct via je 3CX-toestel. Werkt met de 3CX desktop/web-app of de mobiele app op je telefoon.",
@@ -339,6 +347,7 @@ export function IntegrationConfigure() {
 
         {kind === "linkedin" && <LinkedInOAuthBlock cfg={integrationQ.data?.config_public ?? {}} kind={kind!} searchParams={searchParams} setSearchParams={setSearchParams} />}
         {kind === "m365_sso" && <M365SsoInfoBlock cfg={integrationQ.data?.config_public ?? {}} />}
+        {kind === "wespennest" && <WespennestSettingsBlock cfg={integrationQ.data?.config_public ?? {}} form={form} setForm={setForm} />}
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <button
@@ -591,6 +600,91 @@ function M365SsoInfoBlock({ cfg }: { cfg: Record<string, unknown> }) {
               <span className="ml-1 text-amber-700">⚠ Tenant staat op &apos;common&apos;: AAD laat élke M365-tenant binnen. Vul jullie tenant-GUID in voor strikte beveiliging.</span>
             ) : null}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===== Wespennest preferences block =====
+
+function WespennestSettingsBlock({
+  cfg, form, setForm,
+}: {
+  cfg: Record<string, unknown>;
+  form: Record<string, string>;
+  setForm: (f: Record<string, string>) => void;
+}) {
+  // Read the active value from `form` if the user has changed it, else
+  // from the persisted config_public.
+  const current = (form.primary_kvk_source as string)
+    ?? (cfg.primary_kvk_source as string)
+    ?? "auto";
+
+  const setPrimary = (v: string) => {
+    setForm({ ...form, primary_kvk_source: v });
+  };
+
+  const options: { value: string; title: string; desc: string; tone: string }[] = [
+    {
+      value: "auto",
+      title: "Automatisch (aanbevolen)",
+      desc: "Gebruikt KVK officieel als die geconfigureerd is, anders OpenKVK. Beste van twee werelden.",
+      tone: "border-brand-500 bg-brand-50",
+    },
+    {
+      value: "openkvk",
+      title: "OpenKVK eerst",
+      desc: "Gratis bron via overheid.io. Werkt direct, geen API-key nodig. Beperkte data (vooral handelsnaam).",
+      tone: "border-emerald-500 bg-emerald-50",
+    },
+    {
+      value: "kvk",
+      title: "KVK officieel eerst",
+      desc: "Authoritative bron met volledige NAW + functionarissen. Vereist betaalde API-key van developers.kvk.nl.",
+      tone: "border-violet-500 bg-violet-50",
+    },
+  ];
+
+  return (
+    <div className="mt-5 space-y-3">
+      <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Primaire bron voor KvK-lookups</div>
+          <div className="text-xs text-slate-500 mt-1">
+            Wespennest probeert eerst de gekozen bron; als die niets vindt valt het automatisch terug op de andere.
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {options.map((opt) => {
+            const active = current === opt.value;
+            return (
+              <label
+                key={opt.value}
+                className={`flex items-start gap-3 rounded-md border-2 p-3 cursor-pointer transition ${
+                  active ? opt.tone : "border-slate-200 bg-white hover:border-slate-300"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="primary_kvk_source"
+                  value={opt.value}
+                  checked={active}
+                  onChange={() => setPrimary(opt.value)}
+                  className="mt-1 h-4 w-4 accent-brand-500"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">{opt.title}</div>
+                  <div className="text-xs text-slate-600 mt-0.5">{opt.desc}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-900">
+          <strong>Tip:</strong> klik <strong>Save</strong> hieronder om de keuze te bewaren. Wespennest pakt het nieuwe gedrag op bij de eerstvolgende scan-tick (binnen 4 uur, of direct via een handmatige sync).
         </div>
       </div>
     </div>
