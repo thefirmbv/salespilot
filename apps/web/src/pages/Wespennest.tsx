@@ -501,7 +501,7 @@ function FeedTab() {
           <div className="text-3xl mb-2">\ud83d\udcf0</div>
           <div className="font-medium text-slate-700">Geen overname-signalen</div>
           <div className="mt-1">Klik op &laquo;Scan RSS-bronnen&raquo; om Computable, Dutch IT Channel, Mena en Emerce af te zoeken.<br />
-            Later wordt dit elke 4 uur automatisch gedaan via Claude.</div>
+            Elke 4 uur draait dit automatisch via de AI-classifier.</div>
         </div>
       )}
       {items.map((s) => (
@@ -674,17 +674,31 @@ function WespennestReadiness() {
     queryFn: () => api<IntegrationPublic | null>("/integrations/anthropic"),
     retry: false,
   });
+  const openaiQ = useQuery<IntegrationPublic | null>({
+    queryKey: ["/integrations/openai"],
+    queryFn: () => api<IntegrationPublic | null>("/integrations/openai"),
+    retry: false,
+  });
 
   const openkvkOn = !!openkvkQ.data?.is_enabled;
   const kvkOn = !!kvkQ.data?.is_enabled && !!(kvkQ.data?.config_public?.api_key_set);
   const anthropicOn = !!anthropicQ.data?.is_enabled
     && !!(anthropicQ.data?.config_public?.api_key_set);
+  const openaiOn = !!openaiQ.data?.is_enabled
+    && !!(openaiQ.data?.config_public?.api_key_set);
   const primarySource =
     (wespennestQ.data?.config_public?.primary_kvk_source as string) || "auto";
+  const classifierPref =
+    (wespennestQ.data?.config_public?.ai_classifier_source as string) || "auto";
+
+  // The AI-classifier is OK if any provider is configured, OR if the user
+  // explicitly turned it off (then no warning needed -- keyword-filtering
+  // is the chosen mode).
+  const aiClassifierOK = openaiOn || anthropicOn || classifierPref === "off";
 
   const hasKvkSource = openkvkOn || kvkOn;
   const overall: "ready" | "partial" | "setup" =
-    hasKvkSource && anthropicOn ? "ready"
+    hasKvkSource && aiClassifierOK ? "ready"
     : hasKvkSource ? "partial"
     : "setup";
 
@@ -723,16 +737,30 @@ function WespennestReadiness() {
       ),
     },
     {
-      label: "Claude classifier (overname-monitor)",
-      state: anthropicOn ? "ok" : "warn",
+      label: "AI-classifier (overname-monitor)",
+      state: aiClassifierOK ? "ok" : "warn",
       optional: true,
-      detail: anthropicOn ? (
-        <>Active. RSS-items worden geanalyseerd op overname-signalen.</>
+      detail: classifierPref === "off" ? (
+        <>Uitgezet via Wespennest-instellingen. Overname-monitor doet alleen keyword-filtering.</>
+      ) : openaiOn || anthropicOn ? (
+        <>
+          Actief via{" "}
+          <strong>
+            {openaiOn && anthropicOn
+              ? `${classifierPref === "anthropic" ? "Anthropic eerst" : "OpenAI eerst"} (beide configured)`
+              : openaiOn ? "OpenAI" : "Anthropic"}
+          </strong>
+          . RSS-items worden semantisch geanalyseerd op overname-signalen.
+          {" · "}
+          <Link to="/settings/integrations/wespennest" className="underline">voorkeur wijzigen</Link>
+        </>
       ) : (
         <>
-          Anthropic API key ontbreekt. De overname-monitor doet alleen keyword-filtering zonder semantische analyse.
+          Geen AI-provider geconfigureerd. De overname-monitor doet alleen keyword-filtering.
           {" "}
-          <Link to="/settings/integrations/anthropic" className="underline">Configureer Anthropic</Link>.
+          <Link to="/settings/integrations/openai" className="underline font-medium">OpenAI configureren</Link>
+          {" of "}
+          <Link to="/settings/integrations/anthropic" className="underline">Anthropic configureren</Link>.
         </>
       ),
     },
