@@ -622,17 +622,7 @@ function PipelineTab() {
           ))}
         </div>
       </div>
-      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-        <div className="font-medium">Status: stubs actief</div>
-        <div className="mt-1">
-          De echte scanner-modules (m365_scanner, msp_fingerprint, kvk_geofilter, decision_maker_finder, overname_monitor) staan als stubs ingebouwd. Je kunt al wel job-runs starten om te zien hoe de pipeline werkt. De echte HTTP/DNS-calls worden gevuld zodra de Python-modules zijn gedeployd. Vereisten daarvoor:
-          <ul className="mt-1 ml-4 list-disc space-y-0.5">
-            <li>KVK API-key + abonnement (\u20ac6,40/mnd + verbruik)</li>
-            <li>Uitgaande SMTP poort 25 voor RCPT probe</li>
-            <li>2-3 secondary domeinen in Mailgun</li>
-          </ul>
-        </div>
-      </div>
+      <WespennestReadiness />
     </div>
   );
 }
@@ -644,6 +634,176 @@ function KPI({ label, value, sub, tone = "default" }: { label: string; value: st
       <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
       <div className={`mt-1 text-xl font-medium tabular-nums ${toneCls}`}>{value}</div>
       {sub && <div className="text-[11px] text-slate-500">{sub}</div>}
+    </div>
+  );
+}
+
+// ===== Wespennest readiness check =====
+//
+// Reads the current state of the integrations Wespennest depends on
+// and shows a clear "ready / partial / setup needed" status. Replaces
+// the old hard-coded "stubs actief" banner that was wrong.
+
+type IntegrationPublic = {
+  id: string;
+  kind: string;
+  is_enabled: boolean;
+  config_public: Record<string, unknown> | null;
+};
+
+function WespennestReadiness() {
+  // Probe each integration we care about. retry:false because a 404 here
+  // just means "not configured yet" -- not a real error.
+  const wespennestQ = useQuery<IntegrationPublic | null>({
+    queryKey: ["/integrations/wespennest"],
+    queryFn: () => api<IntegrationPublic | null>("/integrations/wespennest"),
+    retry: false,
+  });
+  const openkvkQ = useQuery<IntegrationPublic | null>({
+    queryKey: ["/integrations/openkvk"],
+    queryFn: () => api<IntegrationPublic | null>("/integrations/openkvk"),
+    retry: false,
+  });
+  const kvkQ = useQuery<IntegrationPublic | null>({
+    queryKey: ["/integrations/kvk"],
+    queryFn: () => api<IntegrationPublic | null>("/integrations/kvk"),
+    retry: false,
+  });
+  const anthropicQ = useQuery<IntegrationPublic | null>({
+    queryKey: ["/integrations/anthropic"],
+    queryFn: () => api<IntegrationPublic | null>("/integrations/anthropic"),
+    retry: false,
+  });
+
+  const openkvkOn = !!openkvkQ.data?.is_enabled;
+  const kvkOn = !!kvkQ.data?.is_enabled && !!(kvkQ.data?.config_public?.api_key_set);
+  const anthropicOn = !!anthropicQ.data?.is_enabled
+    && !!(anthropicQ.data?.config_public?.api_key_set);
+  const primarySource =
+    (wespennestQ.data?.config_public?.primary_kvk_source as string) || "auto";
+
+  const hasKvkSource = openkvkOn || kvkOn;
+  const overall: "ready" | "partial" | "setup" =
+    hasKvkSource && anthropicOn ? "ready"
+    : hasKvkSource ? "partial"
+    : "setup";
+
+  const overallTone =
+    overall === "ready" ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+    : overall === "partial" ? "border-amber-200 bg-amber-50 text-amber-900"
+    : "border-red-200 bg-red-50 text-red-900";
+  const overallLabel =
+    overall === "ready" ? "✅ Wespennest is volledig operationeel"
+    : overall === "partial" ? "⚠ Wespennest draait, maar enkele optionele bronnen ontbreken"
+    : "❌ Wespennest mist een KvK-bron — niets te scannen";
+
+  type Row = {
+    label: string;
+    state: "ok" | "warn" | "off";
+    detail: React.ReactNode;
+    optional?: boolean;
+  };
+  const rows: Row[] = [
+    {
+      label: "KvK-bron",
+      state: hasKvkSource ? "ok" : "off",
+      detail: hasKvkSource ? (
+        <>
+          Actief: <strong>{openkvkOn && "OpenKVK"}{openkvkOn && kvkOn && " + "}{kvkOn && "KVK officieel"}</strong>
+          {" · "}primaire voorkeur: <code className="text-[11px]">{primarySource}</code>
+          {" · "}
+          <Link to="/settings/integrations/wespennest" className="underline">wijzigen</Link>
+        </>
+      ) : (
+        <>
+          Geen enkele KvK-bron geconfigureerd. {" "}
+          <Link to="/settings/integrations/openkvk" className="underline font-medium">Configureer OpenKVK (gratis)</Link>
+          {" "}om direct te beginnen.
+        </>
+      ),
+    },
+    {
+      label: "Claude classifier (overname-monitor)",
+      state: anthropicOn ? "ok" : "warn",
+      optional: true,
+      detail: anthropicOn ? (
+        <>Active. RSS-items worden geanalyseerd op overname-signalen.</>
+      ) : (
+        <>
+          Anthropic API key ontbreekt. De overname-monitor doet alleen keyword-filtering zonder semantische analyse.
+          {" "}
+          <Link to="/settings/integrations/anthropic" className="underline">Configureer Anthropic</Link>.
+        </>
+      ),
+    },
+    {
+      label: "DNS-scanners (M365 fingerprint, MSP fingerprint)",
+      state: "ok",
+      detail: <>Geen externe API nodig — gebruikt publieke DNS-records (MX, NS, SPF, CNAME).</>,
+    },
+    {
+      label: "Geo-filter (PDOK geocode + Haversine)",
+      state: "ok",
+      detail: <>PDOK is een gratis open dataset, geen API key nodig. Radius staat op 40 km vanaf Breukelen.</>,
+    },
+    {
+      label: "Decision-maker email patterns",
+      state: kvkOn ? "ok" : "warn",
+      optional: true,
+      detail: kvkOn ? (
+        <>Volledig: KVK officieel levert functionarissen-namen op, daarna genereren we email-patronen.</>
+      ) : (
+        <>
+          Werkt op basis van publieke OpenKVK-namen. Voor authoritative functionarissen + adresgegevens heb je een officiële KVK API key nodig (≈ €6,40/mnd + verbruik).
+          {" "}
+          <Link to="/settings/integrations/kvk" className="underline">KVK koppelen</Link>.
+        </>
+      ),
+    },
+    {
+      label: "SMTP RCPT-verificatie",
+      state: "off",
+      optional: true,
+      detail: (
+        <>
+          Uit (default). Vereist uitgaande poort 25 die meeste hosting-providers blokkeren. Email-patronen worden opgeslagen als <code>unverified</code> — voldoende voor outreach.
+        </>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className={`rounded-md border p-3 ${overallTone}`}>
+        <div className="font-medium">{overallLabel}</div>
+        <div className="mt-1 text-xs">
+          Wespennest scant elke 4 uur. Je kunt ook handmatig een tick triggeren via de Sync-knop.
+        </div>
+      </div>
+
+      <div className="rounded-md border border-slate-200 bg-white overflow-hidden">
+        <div className="border-b border-slate-200 px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500">
+          Component-status
+        </div>
+        <ul className="divide-y divide-slate-100">
+          {rows.map((r, i) => (
+            <li key={i} className="flex items-start gap-3 px-4 py-2.5">
+              <span className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                r.state === "ok" ? "bg-emerald-100 text-emerald-700"
+                : r.state === "warn" ? "bg-amber-100 text-amber-700"
+                : "bg-slate-100 text-slate-500"
+              }`}>{r.state === "ok" ? "✓" : r.state === "warn" ? "!" : "○"}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className="text-sm font-medium">{r.label}</span>
+                  {r.optional && <span className="text-[10px] uppercase tracking-wider text-slate-400">optioneel</span>}
+                </div>
+                <div className="text-xs text-slate-600 mt-0.5">{r.detail}</div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
