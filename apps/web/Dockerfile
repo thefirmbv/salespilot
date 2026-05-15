@@ -28,6 +28,19 @@ FROM caddy:2-alpine AS production
 COPY <<'CADDY' /etc/caddy/Caddyfile
 :80 {
     root * /srv
+
+    # Hashed Vite assets (filename includes a content hash) cache forever
+    @assets path /assets/*
+    header @assets Cache-Control "public, max-age=31536000, immutable"
+
+    # index.html and SPA routes must NEVER cache, otherwise the shell
+    # references a deleted bundle and the user sees a stale build.
+    # We match "anything that's NOT /assets/*" so SPA paths like
+    # /wespennest, /toegekend, /deals all get no-cache.
+    @html not path /assets/*
+    header @html Cache-Control "no-cache, no-store, must-revalidate"
+    header @html Pragma "no-cache"
+
     try_files {path} /index.html
     file_server
     encode zstd gzip
