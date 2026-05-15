@@ -315,10 +315,25 @@ async def _resolve_record(domain: str, rtype: str) -> list[str]:
         return []
 
 
+def _msp_match_keys(msp_apex: str) -> list[str]:
+    """Build a list of substrings that should hit when matching against
+    MSP-managed DNS records. We match BOTH the full apex (xinno.nl) and
+    the bare label (xinno) so we catch things like 'spf.xinno2.net' that
+    don't contain the literal apex.
+    Skip very short labels (<4 chars) to avoid false positives like 'kpn'.
+    """
+    keys = [msp_apex.lower()]
+    label = msp_apex.split(".")[0].lower()
+    if len(label) >= 4 and label != msp_apex:
+        keys.append(label)
+    return keys
+
+
 async def discover_mx_pointing_to_msp(
     msp_apex: str, candidate_domains: Iterable[str], max_results: int = 200,
 ) -> list[CustomerCandidate]:
     """Of the candidate domains, which have MX records pointing at the MSP?"""
+    keys = _msp_match_keys(msp_apex)
     out: list[CustomerCandidate] = []
     sem = asyncio.Semaphore(10)
 
@@ -328,16 +343,14 @@ async def discover_mx_pointing_to_msp(
         async with sem:
             records = await _resolve_record(domain, "MX")
         for rec in records:
-            # 'priority mx.host.' format
-            mx_host = rec.split()[-1].rstrip(".") if rec else ""
-            if msp_apex in mx_host:
-                out.append(CustomerCandidate(
-                    domain=domain,
-                    method="mx_lookup",
-                    evidence=f"MX -> {mx_host}",
-                    confidence=85,
-                ))
-                return
+            mx_host = rec.split()[-1].rstrip(".").lower() if rec else ""
+            for key in keys:
+                if key in mx_host:
+                    out.append(CustomerCandidate(
+                        domain=domain, method="mx_lookup",
+                        evidence=f"MX -> {mx_host}", confidence=85,
+                    ))
+                    return
 
     await asyncio.gather(*(check(d) for d in candidate_domains))
     return out
@@ -347,6 +360,7 @@ async def discover_spf_including_msp(
     msp_apex: str, candidate_domains: Iterable[str], max_results: int = 200,
 ) -> list[CustomerCandidate]:
     """Of the candidate domains, which have SPF that includes the MSP?"""
+    keys = _msp_match_keys(msp_apex)
     out: list[CustomerCandidate] = []
     sem = asyncio.Semaphore(10)
 
@@ -356,16 +370,16 @@ async def discover_spf_including_msp(
         async with sem:
             records = await _resolve_record(domain, "TXT")
         for rec in records:
-            if not rec.startswith("v=spf"):
+            rec_lc = rec.lower()
+            if not rec_lc.startswith('"v=spf') and not rec_lc.startswith("v=spf"):
                 continue
-            if msp_apex in rec:
-                out.append(CustomerCandidate(
-                    domain=domain,
-                    method="spf_include",
-                    evidence=f"SPF includes {msp_apex}",
-                    confidence=80,
-                ))
-                return
+            for key in keys:
+                if key in rec_lc:
+                    out.append(CustomerCandidate(
+                        domain=domain, method="spf_include",
+                        evidence=f"SPF includes {key}", confidence=80,
+                    ))
+                    return
 
     await asyncio.gather(*(check(d) for d in candidate_domains))
     return out

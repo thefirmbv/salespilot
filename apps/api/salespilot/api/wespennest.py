@@ -700,3 +700,84 @@ async def save_customer_domains(
         "ok": True, "created": created, "skipped": skipped,
         "msp": msp.name, "source_tag": source_tag,
     }
+
+
+# ----------------------------------------------------------------------
+# Domain-level attributions endpoint
+# Shows wn_domains with their vendor_attribution to MSPs. This is the
+# 'pre-leads' pool -- domains we've identified as belonging to a specific
+# MSP via DNS fingerprinting + customer-discovery, but haven't yet
+# enriched with KVK/decision-maker data.
+# ----------------------------------------------------------------------
+
+
+class DomainAttribution(BaseModel):
+    domain: str
+    domain_id: UUID
+    domain_status: str  # qualified_m365 | non_m365 | pending | scanned
+    discovery_source: str | None
+    first_seen: datetime
+    last_scanned: datetime | None
+    # Attribution(s): a domain can belong to multiple MSPs if signals fire on multiple
+    attributions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@router.get("/attributions", response_model=list[DomainAttribution])
+async def list_domain_attributions(
+    auth: CurrentAuth, db: Db,
+    limit: int = Query(default=200, ge=1, le=2000),
+    only_attributed: bool = Query(default=False),
+    msp_id: UUID | None = Query(default=None),
+) -> list[DomainAttribution]:
+    """Return discovered domains with their MSP attributions.
+
+    Each row joins WnDomain with WnVendorAttribution rows for the same
+    domain. Used by the 'Toegekende klanten' view to show the bridge
+    between customer-discovery (CT/website/LinkedIn) + DNS-fingerprint
+    matching.
+    """
+    rows = (
+        await db.execute(
+            select(WnDomain).order_by(desc(WnDomain.first_seen)).limit(limit)
+        )
+    ).scalars().all()
+
+    # Gather all attributions for these domains in one query
+    domain_ids = [r.id for r in rows]
+    attr_rows = []
+    if domain_ids:
+        q = select(WnVendorAttribution, WnMsp).join(
+            WnMsp, WnMsp.id == WnVendorAttribution.msp_id,
+        ).where(WnVendorAttribution.domain_id.in_(domain_ids))
+        if msp_id:
+            q = q.where(WnVendorAttribution.msp_id == msp_id)
+        attr_rows = (await db.execute(q)).all()
+
+    by_dom: dict[UUID, list[dict[str, Any]]] = {}
+    for va, msp in attr_rows:
+        by_dom.setdefault(va.domain_id, []).append({
+            "msp_id": str(msp.id),
+            "msp_name": msp.name,
+            "msp_acquired_by": msp.acquired_by,
+            "confidence": va.confidence,
+            "rules_fired": list(va.rules_fired or []),
+            "attributed_at": va.attributed_at.isoformat() if va.attributed_at else None,
+        })
+
+    out: list[DomainAttribution] = []
+    for d in rows:
+        attrs = by_dom.get(d.id, [])
+        if only_attributed and not attrs:
+            continue
+        if msp_id and not attrs:
+            continue
+        out.append(DomainAttribution(
+            domain=d.domain,
+            domain_id=d.id,
+            domain_status=d.status,
+            discovery_source=d.discovery_source,
+            first_seen=d.first_seen,
+            last_scanned=d.last_scanned,
+            attributions=sorted(attrs, key=lambda a: -a["confidence"]),
+        ))
+    return out

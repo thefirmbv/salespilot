@@ -220,20 +220,34 @@ async def scan_domain_m365(
 
 
 async def _gather_msp_signals(domain: str) -> dict[str, Any]:
-    """Collect the signals we match MSP fingerprints against."""
+    """Collect the signals we match MSP fingerprints against.
+
+    Includes MX records since 2026-05: MSP-managed mail often shows up as
+    'klantbedrijf.mail.<msp>.nl' or as a direct CNAME to <msp>.mailbox.it,
+    which is a strong attribution signal even when SPF is mixed.
+    """
     ns_task = _resolve_records(domain, "NS")
     txt_task = _resolve_records(domain, "TXT")
+    mx_task = _resolve_records(domain, "MX")
     autodisc_task = _resolve_records(f"autodiscover.{domain}", "CNAME")
     mail_task = _resolve_records(f"mail.{domain}", "CNAME")
     portal_task = _resolve_records(f"portal.{domain}", "CNAME")
-    ns, txt, autodisc, mailc, portal = await asyncio.gather(
-        ns_task, txt_task, autodisc_task, mail_task, portal_task,
+    ns, txt, mx, autodisc, mailc, portal = await asyncio.gather(
+        ns_task, txt_task, mx_task, autodisc_task, mail_task, portal_task,
         return_exceptions=False,
     )
+    # MX records come back as 'priority host.' -- strip prio and trailing dot
+    mx_hosts = []
+    for entry in mx:
+        parts = entry.strip().split()
+        host = (parts[-1] if parts else entry).rstrip(".").lower()
+        if host:
+            mx_hosts.append(host)
     return {
         "ns": [n.rstrip(".").lower() for n in ns],
         "txt": [t.lower() for t in txt],
         "spf": [t for t in txt if "spf" in t.lower() or "include:" in t.lower()],
+        "mx": mx_hosts,
         "autodiscover_cname": [c.rstrip(".").lower() for c in autodisc],
         "mail_cname": [c.rstrip(".").lower() for c in mailc],
         "portal_cname": [c.rstrip(".").lower() for c in portal],
@@ -246,6 +260,10 @@ def _match_fingerprint(signals: dict[str, Any], fp_type: str, pattern: str) -> b
         return any(p in ns for ns in signals.get("ns", []))
     if fp_type == "spf_include":
         return any(p in t for t in signals.get("spf", []))
+    if fp_type == "mx_host":
+        # Match the MSP name/domain as a substring inside any MX target,
+        # so 'protagonist' matches 'mx01.protagonist.nl' AND 'klant.protagonist.mailhost.nl'.
+        return any(p in m for m in signals.get("mx", []))
     if fp_type == "autodiscover_cname":
         return any(p in c for c in signals.get("autodiscover_cname", []))
     if fp_type == "mail_cname":
@@ -258,12 +276,18 @@ def _match_fingerprint(signals: dict[str, Any], fp_type: str, pattern: str) -> b
 
 
 async def scan_domain_msp_fingerprint(
-    db: AsyncSession, org_id: UUID, max_domains: int = 50
+    db: AsyncSession, org_id: UUID, max_domains: int = 500
 ) -> dict[str, Any]:
     """Match scanned domains against MSP fingerprints (forward attribution)."""
+    # Accept any domain that's been through DNS resolution at least once.
+    # m365_scanner sets status -> qualified_m365 or non_m365; some legacy
+    # domains may still have status='scanned'. All three are valid input
+    # for fingerprint matching.
     domains = (
         await db.execute(
-            select(WnDomain).where(WnDomain.status == "scanned").limit(max_domains)
+            select(WnDomain).where(
+                WnDomain.status.in_(["scanned", "qualified_m365", "non_m365"])
+            ).limit(max_domains)
         )
     ).scalars().all()
     fps = (

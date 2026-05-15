@@ -131,7 +131,7 @@ export function Wespennest() {
           </div>
         </div>
         <div className="flex gap-1 border-b border-slate-200 px-4">
-          {[["dashboard","Dashboard"],["leads","Leads"],["msps","MSP\u2019s"],["discovery","Klanten zoeken"],["feed","Overname-feed"],["pipeline","Pipeline"]].map(([id, label]) => (
+          {[["dashboard","Dashboard"],["leads","Leads"],["msps","MSP\u2019s"],["discovery","Klanten zoeken"],["attribution","Toegekend"],["feed","Overname-feed"],["pipeline","Pipeline"]].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${tab === id ? "border-brand-500 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
               {label}
@@ -143,6 +143,7 @@ export function Wespennest() {
           {tab === "leads" && <LeadsTab />}
           {tab === "msps" && <MspsTab />}
           {tab === "discovery" && <DiscoveryTab />}
+          {tab === "attribution" && <AttributionTab />}
           {tab === "feed" && <FeedTab />}
           {tab === "pipeline" && <PipelineTab />}
         </div>
@@ -1038,16 +1039,66 @@ function DiscoveryTab() {
 
         {someNeedsCandidates && (
           <div>
-            <label className="block text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">
-              Kandidaat-domeinen (één per regel)
-            </label>
+            <div className="flex items-baseline justify-between gap-2 mb-1">
+              <label className="block text-xs uppercase tracking-wider text-slate-500 font-semibold">
+                Kandidaat-domeinen (één per regel)
+              </label>
+              <div className="flex gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    // Vul uit alle bekende wn_domains (klant-vondsten van andere MSPs)
+                    try {
+                      const data = await api<{ domain: string }[]>(
+                        "/wespennest/attributions?limit=2000"
+                      );
+                      const doms = data.map((d) => d.domain).filter((d) => /^[a-z0-9.-]+\.[a-z]{2,8}$/i.test(d));
+                      setCandidateDomainsText(doms.join("\n"));
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }}
+                  className="rounded-md bg-slate-100 hover:bg-slate-200 px-2 py-1 text-slate-700"
+                >
+                  Gebruik wn_domains ({"je opgeslagen klant-vondsten"})
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const txt = await navigator.clipboard.readText();
+                      setCandidateDomainsText(txt);
+                    } catch {}
+                  }}
+                  className="rounded-md bg-slate-100 hover:bg-slate-200 px-2 py-1 text-slate-700"
+                >
+                  Plak uit klembord
+                </button>
+                {candidateDomainsText && (
+                  <button
+                    type="button"
+                    onClick={() => setCandidateDomainsText("")}
+                    className="rounded-md bg-slate-100 hover:bg-rose-100 px-2 py-1 text-slate-700"
+                  >
+                    Wis
+                  </button>
+                )}
+              </div>
+            </div>
             <textarea
               value={candidateDomainsText}
               onChange={(e) => setCandidateDomainsText(e.target.value)}
               rows={6}
               placeholder="klant1.nl&#10;klant2.nl&#10;..."
               className="w-full font-mono text-xs rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            <div className="text-xs text-slate-500 mt-1">Vereist voor MX/SPF/Reseller-substring methodes.</div>
+            <div className="text-xs text-slate-500 mt-1">
+              Vereist voor MX/SPF/Reseller-substring methodes.
+              {candidateDomainsText && (
+                <> — <strong>
+                  {candidateDomainsText.split(/[\s,;\n]+/).filter(Boolean).length}
+                </strong> domeinen ingevoerd.</>
+              )}
+            </div>
           </div>
         )}
 
@@ -1116,6 +1167,149 @@ function DiscoveryTab() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ===== Attribution tab =====
+// Shows the bridge between customer-discovery (CT logs / website-crawl /
+// LinkedIn) and DNS-fingerprint matching. For each discovered domain,
+// list which MSP(s) it was attributed to with confidence + evidence.
+// Lets the user kick off the pipeline to (re)run fingerprint matching.
+
+type AttributedDomain = {
+  domain: string;
+  domain_id: string;
+  domain_status: string;
+  discovery_source: string | null;
+  first_seen: string;
+  last_scanned: string | null;
+  attributions: {
+    msp_id: string;
+    msp_name: string;
+    msp_acquired_by: string | null;
+    confidence: number;
+    rules_fired: string[];
+    attributed_at: string | null;
+  }[];
+};
+
+function AttributionTab() {
+  const qc = useQueryClient();
+  const [filter, setFilter] = useState<"all" | "attributed" | "unattributed">("attributed");
+  const dataQ = useQuery<AttributedDomain[]>({
+    queryKey: ["/wespennest/attributions", filter],
+    queryFn: () => api<AttributedDomain[]>(
+      `/wespennest/attributions?only_attributed=${filter === "attributed"}`
+    ),
+  });
+
+  const runMut = useMutation({
+    mutationFn: () => api("/wespennest/pipeline/msp_fingerprint/run", { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/wespennest/attributions"] });
+    },
+  });
+
+  const rows = (dataQ.data || []).filter(r => {
+    if (filter === "unattributed") return r.attributions.length === 0;
+    return true;
+  });
+  const totalDomains = (dataQ.data || []).length;
+  const attributedCount = (dataQ.data || []).filter(r => r.attributions.length > 0).length;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+        Domeinen uit "Klanten zoeken" gematched tegen MSP-vingerprints (MX / SPF / NS).
+        Een match betekent: <strong>dit eindklant-domein deelt mail-infrastructuur met een
+        overgenomen MSP</strong> — sterk signaal voor outreach.
+      </div>
+
+      <div className="rounded-lg bg-white ring-1 ring-slate-200 p-4 flex items-baseline justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Status</div>
+          <div className="text-sm">
+            <strong>{attributedCount}</strong> van <strong>{totalDomains}</strong> domeinen
+            toegekend aan een MSP.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-sm">
+            {(["attributed", "all", "unattributed"] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 ${filter === f ? "bg-brand-500 text-white" : "bg-white hover:bg-slate-50"}`}
+              >
+                {f === "attributed" ? "Met toekenning" : f === "all" ? "Alle" : "Zonder toekenning"}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => runMut.mutate()}
+            disabled={runMut.isPending}
+            className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {runMut.isPending ? "Bezig..." : "Re-scan vingerprints"}
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-lg bg-white ring-1 ring-slate-200">
+        {dataQ.isLoading ? (
+          <div className="p-8 text-center text-sm text-slate-500">Laden...</div>
+        ) : rows.length === 0 ? (
+          <div className="p-8 text-center text-sm text-slate-500">
+            {filter === "attributed"
+              ? "Nog geen toegekende klanten. Voeg MSP-vingerprints toe en draai de scan opnieuw."
+              : filter === "unattributed"
+              ? "Alle domeinen zijn al toegekend!"
+              : "Geen domeinen gevonden."}
+          </div>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {rows.map(row => (
+              <li key={row.domain_id} className="px-4 py-3 hover:bg-slate-50">
+                <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                  <code className="font-mono text-sm font-medium">{row.domain}</code>
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                      row.domain_status === "qualified_m365" ? "bg-emerald-50 text-emerald-800" :
+                      row.domain_status === "non_m365" ? "bg-amber-50 text-amber-800" :
+                      "bg-slate-100 text-slate-600"
+                    }`}>{row.domain_status}</span>
+                    {row.discovery_source && (
+                      <span className="text-[10px]">via {row.discovery_source}</span>
+                    )}
+                  </div>
+                </div>
+                {row.attributions.length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {row.attributions.map((a, i) => (
+                      <li key={i} className="flex items-baseline gap-2 text-sm">
+                        <span className={`font-mono tabular-nums text-xs ${
+                          a.confidence >= 85 ? "text-emerald-700" :
+                          a.confidence >= 70 ? "text-amber-700" : "text-slate-600"
+                        }`}>{a.confidence}%</span>
+                        <span className="font-medium">{a.msp_name}</span>
+                        {a.msp_acquired_by && (
+                          <span className="text-xs text-slate-500">→ onderdeel van {a.msp_acquired_by}</span>
+                        )}
+                        <span className="text-xs text-slate-500 ml-auto truncate">
+                          {a.rules_fired.join(", ")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="mt-1 text-xs text-slate-400 italic">geen vingerprint-match</div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
