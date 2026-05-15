@@ -215,6 +215,7 @@ export function AppLayout() {
       title: "Acquisitie",
       items: [
         { to: "/wespennest", label: "Wespennest", icon: "wasp" },
+        { to: "/toegekend",  label: "Toegekend",  icon: "target" },
       ],
     },
     {

@@ -115,7 +115,11 @@ const JOB_ORDER = ["overname_monitor", "domain_discovery", "m365_scanner", "msp_
 
 export function Wespennest() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") ?? "dashboard";
+  // Tab default uit URL: /toegekend -> tab=attribution, anders ?tab= of dashboard.
+  const defaultTab = typeof window !== "undefined" && window.location.pathname === "/toegekend"
+    ? "attribution"
+    : "dashboard";
+  const tab = params.get("tab") ?? defaultTab;
   const setTab = (t: string) => {
     const next = new URLSearchParams(params);
     next.set("tab", t);

@@ -67,6 +67,7 @@ createRoot(root).render(
               <Route path="/mail-campaigns" element={<MailCampaigns />} />
               <Route path="/mail-campaigns/:id" element={<MailCampaignDetail />} />
               <Route path="/wespennest" element={<Wespennest />} />
+              <Route path="/toegekend" element={<Wespennest />} />
               <Route path="/management" element={<Management />} />
               <Route path="/mandates" element={<Mandates />} />
               <Route path="/calendar" element={<Calendar />} />
