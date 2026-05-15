@@ -271,10 +271,12 @@ async def _ai_filter_company_names(
             db=db, org_id=org_id,
             system_prompt=(
                 "Je bent een Nederlandse B2B-marketing analyst. "
-                "Je krijgt een lijst tekstfragmenten van een MSP-website. "
-                "Je taak: bepaal welke daarvan namen zijn van Nederlandse "
+                "Je krijgt een lijst tekstfragmenten van een MSP-website "
+                "en moet bepalen welke daarvan namen zijn van Nederlandse "
                 "klantbedrijven (NIET de MSP zelf, NIET menu-items, NIET "
-                "categorieën zoals 'Cybersecurity' of 'Cloud'). "
+                "categorieen zoals 'Cybersecurity' of 'Cloud', NIET "
+                "hardware/software-merken die de MSP doorverkoopt zoals "
+                "Apple, Lenovo, Microsoft, HP, Dell, Samsung, Canon, etc). "
                 "Antwoord met ALLEEN een JSON-array van de exacte teksten "
                 "die echte klantbedrijven zijn, geen toelichting."
             ),
@@ -303,17 +305,72 @@ async def _ai_filter_company_names(
     return out
 
 
+# Domains die we NIET als klant willen zien -- hardware/software-merken
+# die MSP's doorverkopen, en software-leveranciers.
+_NEVER_CUSTOMER_BRANDS = {
+    "apple", "lenovo", "canon", "brother", "hp", "dell", "samsung",
+    "logitech", "asus", "acer", "dynabook", "microsoft", "intel",
+    "amd", "nvidia", "sony", "epson", "philips", "kyocera", "ricoh",
+    "office365", "office", "microsoft365", "outlook", "teams",
+    "adobe", "autodesk", "sap", "oracle", "salesforce", "atlassian",
+    "google", "youtube", "facebook", "instagram", "linkedin", "twitter",
+    "x", "tiktok", "whatsapp", "telegram", "signal", "zoom", "webex",
+    "cisco", "vmware", "citrix", "veeam", "fortinet", "sophos",
+    "paloalto", "kaspersky", "norton", "mcafee", "trendmicro", "bitdefender",
+    "eset", "datto", "kaseya", "connectwise", "ninja", "ninjarmm",
+    "atera", "halopsa", "haloitsm", "manageengine", "solarwinds",
+    "amazon", "aws", "azure", "gcp", "googlecloud", "digitalocean",
+    "hetzner", "ovh", "leaseweb", "transip", "godaddy", "namecheap",
+    "wordpress", "shopify", "magento", "wix", "squarespace", "weebly",
+    "pasfoto",
+}
+
+
+def _is_brand_or_vendor(name: str) -> bool:
+    """Hard filter -- skip the most common hardware/software brand
+    names that the AI sometimes misclassifies as customer-names.
+    Match the slug (lowercase, no spaces/punctuation) so 'Microsoft'
+    and 'microsoft.nl' both hit."""
+    slug = re.sub(r"[^a-z0-9]+", "", name.lower())
+    return slug in _NEVER_CUSTOMER_BRANDS
+
+
 def _slug_to_nl_domain(name: str) -> str | None:
     """Naive guess: 'Voorbeeld B.V.' -> 'voorbeeld.nl'.
 
-    Strips legal suffixes, lowercases, removes punctuation. Returns None
-    if the result is too short or doesn't look usable.
+    Strips legal suffixes, lowercases, removes punctuation. If the
+    input looks like a sentence (5+ words, contains verbs like 'kiest',
+    'kiezen', 'gaat', 'partner', etc.) we take only the first 2-3 words
+    so we don't get unusable 100-char domains.
+    Returns None when the result is too short or too long.
     """
-    s = name.lower()
+    s = (name or "").strip()
+    if not s:
+        return None
+    # Long sentence detection: if more than ~50 chars or contains verbs/
+    # connectives, keep only the first 1-3 words (likely the actual name).
+    sentence_markers = [
+        " kiest ", " kiezen ", " gaat ", " gaan ", " partner ", " bv als ",
+        " bv groeit ", " met xinno", " met kreuze", " met smizer",
+        " sluit aan", " bundelen", " kiezen voor", " kiest voor",
+        " - de ", " 8211 ", " 8216 ", " 8217 ", "&#",
+    ]
+    s_lower = s.lower()
+    if len(s) > 50 or any(m in s_lower for m in sentence_markers):
+        # Pick only the first 1-2 capitalised tokens
+        words = re.split(r"\s+", s)
+        first_words: list[str] = []
+        for w in words[:3]:
+            # Stop on first lowercase-only word like 'kiest' 'sluit'
+            if w and w[0].islower() and len(first_words) >= 1:
+                break
+            first_words.append(w)
+        s = " ".join(first_words) if first_words else s[:30]
+    s = s.lower()
     s = re.sub(r"\b(b\.?v\.?|n\.?v\.?|holding|group|nederland|netherlands|bv|nv|"
                r"international|ltd|inc|corp|services|s\.r\.l\.|gmbh)\b\.?", "", s)
     s = re.sub(r"[^a-z0-9]+", "", s)
-    if len(s) < 3 or len(s) > 40:
+    if len(s) < 3 or len(s) > 30:
         return None
     return f"{s}.nl"
 
@@ -379,9 +436,13 @@ async def crawl_msp_website(
         db, org_id, msp_name, list(all_candidates.keys()),
     )
 
-    # Build hits with confidence + domain guess
+    # Build hits with confidence + domain guess. Skip hardware/software
+    # brand-names that the AI sometimes lets through.
     hits: list[WebCustomerHit] = []
     for name in confirmed_names[:max_results]:
+        if _is_brand_or_vendor(name):
+            log.debug("filtered brand %r", name)
+            continue
         src = all_candidates.get(name) or all_candidates.get(name.strip())
         if not src:
             # Sometimes the AI returns a slight variation; match case-insensitive

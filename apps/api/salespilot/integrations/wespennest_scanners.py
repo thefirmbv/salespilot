@@ -192,10 +192,12 @@ async def scan_domain_m365(
             sig.scanned_at = now
 
         if result.uses_m365:
-            d.status = "scanned"
+            d.status = "qualified_m365"
             m365_found += 1
         else:
-            d.status = "rejected"
+            # Not M365 -- still a potential lead (could be a migration
+            # target), but lower priority than known M365 users.
+            d.status = "non_m365"
             rejected += 1
         d.last_scanned = now
         await db.flush()
