@@ -58,7 +58,7 @@ function BucketPill({ bucket }: { bucket: string | null }) {
       style={{ backgroundColor: s.bg, color: s.text }}
     >
       <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: s.dot }} />
-      {bucket === "hot" ? "Hot \u226580" : bucket === "warm" ? "Warm 50-79" : "Cold <50"}
+      {bucket === "hot" ? "Hot ≥80" : bucket === "warm" ? "Warm 50-79" : "Cold <50"}
     </span>
   );
 }
@@ -180,7 +180,7 @@ export function Sequences() {
           <div>
             <h1 className="text-lg font-medium">Sequences</h1>
             <div className="mt-0.5 text-xs text-slate-500">
-              Mail autopilot \u00b7 score-driven enrollment
+              Mail autopilot · score-driven enrollment
             </div>
           </div>
           <button
@@ -216,7 +216,7 @@ export function Sequences() {
           Campaigns
         </div>
 
-        {seqQ.isLoading && <div className="px-4 pb-6 text-sm text-slate-500">Loading\u2026</div>}
+        {seqQ.isLoading && <div className="px-4 pb-6 text-sm text-slate-500">Loading…</div>}
 
         {!seqQ.isLoading && sorted.length === 0 && (
           <div className="px-4 pb-6 pt-2 text-sm text-slate-500">
@@ -237,7 +237,7 @@ export function Sequences() {
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{s.name}</div>
                   <div className="truncate text-xs text-slate-500">
-                    {s.description ?? "\u2014"}
+                    {s.description ?? "—"}
                   </div>
                 </div>
                 <div className="text-right text-xs text-slate-500">
@@ -275,7 +275,7 @@ export function Sequences() {
                 <div>
                   <span className="font-medium">{q.company_name}</span>{" "}
                   <span className="text-slate-500">
-                    \u00b7 {q.bucket ?? "manual"} \u00b7 step {q.step_position} {q.step_kind}
+                    · {q.bucket ?? "manual"} · step {q.step_position} {q.step_kind}
                   </span>
                 </div>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">

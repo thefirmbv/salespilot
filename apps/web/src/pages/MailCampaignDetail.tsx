@@ -71,7 +71,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function fmtDateTime(iso: string | null): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   return new Date(iso).toLocaleString("nl-NL", {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   });
@@ -106,7 +106,7 @@ export function MailCampaignDetail() {
   });
 
   if (campQ.isLoading || !campQ.data) {
-    return <div className="text-sm text-slate-500">Bezig met laden\u2026</div>;
+    return <div className="text-sm text-slate-500">Bezig met laden…</div>;
   }
   const c = campQ.data;
   const recipients = rcptsQ.data ?? [];
@@ -116,7 +116,7 @@ export function MailCampaignDetail() {
       <div className="overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">
         <div className="border-b border-slate-200 px-4 py-3">
           <Link to="/mail-campaigns" className="text-xs text-slate-500 hover:text-slate-900">
-            \u2190 Alle campagnes
+            ← Alle campagnes
           </Link>
           <h1 className="mt-1 text-lg font-medium">{c.name}</h1>
           {c.subject && (
@@ -125,8 +125,8 @@ export function MailCampaignDetail() {
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <StatusBadge status={c.status} />
             {c.from_name && <span>Van: {c.from_name}{c.from_email && ` <${c.from_email}>`}</span>}
-            {c.sent_at && <span>\u00b7 Verzonden {fmtDateTime(c.sent_at)}</span>}
-            {!c.sent_at && c.scheduled_at && <span>\u00b7 Ingepland {fmtDateTime(c.scheduled_at)}</span>}
+            {c.sent_at && <span>· Verzonden {fmtDateTime(c.sent_at)}</span>}
+            {!c.sent_at && c.scheduled_at && <span>· Ingepland {fmtDateTime(c.scheduled_at)}</span>}
           </div>
         </div>
 
@@ -173,7 +173,7 @@ export function MailCampaignDetail() {
         </div>
 
         {rcptsQ.isLoading && (
-          <div className="px-4 py-6 text-sm text-slate-500">Bezig met laden\u2026</div>
+          <div className="px-4 py-6 text-sm text-slate-500">Bezig met laden…</div>
         )}
         {!rcptsQ.isLoading && recipients.length === 0 && (
           <div className="px-4 py-10 text-center text-sm text-slate-500">
@@ -203,7 +203,7 @@ export function MailCampaignDetail() {
                   {r.company_name}
                 </Link>
               ) : (
-                <span className="text-sm text-slate-400">\u2014</span>
+                <span className="text-sm text-slate-400">—</span>
               )}
             </div>
             <div>
@@ -214,11 +214,11 @@ export function MailCampaignDetail() {
                 <>
                   <div>{fmtDateTime(r.opened_at)}</div>
                   {r.open_count > 1 && (
-                    <div className="text-[10px] text-slate-500">{r.open_count}\u00d7</div>
+                    <div className="text-[10px] text-slate-500">{r.open_count}×</div>
                   )}
                 </>
               ) : (
-                <span className="text-slate-400">\u2014</span>
+                <span className="text-slate-400">—</span>
               )}
             </div>
             <div className="text-right text-xs tabular-nums">
@@ -226,11 +226,11 @@ export function MailCampaignDetail() {
                 <>
                   <div>{fmtDateTime(r.clicked_at)}</div>
                   {r.click_count > 1 && (
-                    <div className="text-[10px] text-slate-500">{r.click_count}\u00d7</div>
+                    <div className="text-[10px] text-slate-500">{r.click_count}×</div>
                   )}
                 </>
               ) : (
-                <span className="text-slate-400">\u2014</span>
+                <span className="text-slate-400">—</span>
               )}
             </div>
           </div>

@@ -43,11 +43,11 @@ type Summary = {
 };
 
 const TYPE_ICONS: Record<string, { icon: string; bg: string; fg: string }> = {
-  call:    { icon: "\ud83d\udcde", bg: "#FAEEDA", fg: "#854F0B" },
-  email:   { icon: "\u2709",       bg: "#E6F1FB", fg: "#0C447C" },
-  meeting: { icon: "\ud83d\udc65", bg: "#EEEDFE", fg: "#3C3489" },
-  task:    { icon: "\u2713",       bg: "#E1F5EE", fg: "#085041" },
-  note:    { icon: "\u00b6",       bg: "#F1F5F9", fg: "#475569" },
+  call:    { icon: "📞", bg: "#FAEEDA", fg: "#854F0B" },
+  email:   { icon: "✉",       bg: "#E6F1FB", fg: "#0C447C" },
+  meeting: { icon: "👥", bg: "#EEEDFE", fg: "#3C3489" },
+  task:    { icon: "✓",       bg: "#E1F5EE", fg: "#085041" },
+  note:    { icon: "¶",       bg: "#F1F5F9", fg: "#475569" },
 };
 
 function TypeChip({ type }: { type: string }) {
@@ -64,7 +64,7 @@ function TypeChip({ type }: { type: string }) {
 }
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   const d = new Date(iso);
   return d.toLocaleDateString("nl-NL", {
     day: "numeric",
@@ -81,7 +81,7 @@ function fmtTime(iso: string | null): string {
 }
 
 function relativeDate(iso: string | null): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   const d = new Date(iso);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -263,13 +263,13 @@ export function Activities() {
           <input
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Zoek\u2026"
+            placeholder="Zoek…"
             className="md:ml-auto w-full md:w-auto min-w-0 md:min-w-[200px] rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
 
         {listQ.isLoading && (
-          <div className="px-4 py-6 text-sm text-slate-500">Bezig met laden\u2026</div>
+          <div className="px-4 py-6 text-sm text-slate-500">Bezig met laden…</div>
         )}
 
         {!listQ.isLoading && items.length === 0 && (
@@ -310,7 +310,7 @@ export function Activities() {
                     {a.target_name}
                   </Link>
                 ) : (
-                  <span className="text-sm text-slate-400">\u2014</span>
+                  <span className="text-sm text-slate-400">—</span>
                 )}
                 {a.quotation_amount && (
                   <div className="text-[11px] text-slate-500">
@@ -527,7 +527,7 @@ function ActivityCreateModal({
       <div className="w-full max-w-xl rounded-lg bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <h2 className="text-base font-semibold">Nieuwe activity</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">\u00d7</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">×</button>
         </div>
         <div className="space-y-3 p-4 max-h-[70vh] overflow-y-auto">
           {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">{error}</div>}
@@ -537,11 +537,11 @@ function ActivityCreateModal({
               <span className="block text-[11px] uppercase tracking-wider text-slate-500 mb-1">Type</span>
               <select value={type} onChange={(e) => setType(e.target.value as typeof type)}
                 className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm">
-                <option value="call">\ud83d\udcde Call</option>
-                <option value="email">\u2709 Email</option>
-                <option value="meeting">\ud83d\udc65 Meeting</option>
-                <option value="task">\u2713 Task</option>
-                <option value="note">\u00b6 Note</option>
+                <option value="call">📞 Call</option>
+                <option value="email">✉ Email</option>
+                <option value="meeting">👥 Meeting</option>
+                <option value="task">✓ Task</option>
+                <option value="note">¶ Note</option>
               </select>
             </label>
             <label className="block">
@@ -571,14 +571,14 @@ function ActivityCreateModal({
               {targetType === "company" && (
                 <select value={targetId} onChange={(e) => { setTargetId(e.target.value); setQuotationId(""); }}
                   className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm">
-                  <option value="">\u2014 kies bedrijf \u2014</option>
+                  <option value="">— kies bedrijf —</option>
                   {(companiesQ.data?.items ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               )}
               {targetType === "contact" && (
                 <select value={targetId} onChange={(e) => { setTargetId(e.target.value); setQuotationId(""); }}
                   className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm">
-                  <option value="">\u2014 kies contact \u2014</option>
+                  <option value="">— kies contact —</option>
                   {(contactsQ.data?.items ?? []).map((c) => (
                     <option key={c.id} value={c.id}>{[c.first_name, c.last_name].filter(Boolean).join(" ") || "(naamloos)"}</option>
                   ))}
@@ -587,7 +587,7 @@ function ActivityCreateModal({
               {targetType === "deal" && (
                 <select value={targetId} onChange={(e) => { setTargetId(e.target.value); setQuotationId(""); }}
                   className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm">
-                  <option value="">\u2014 kies deal \u2014</option>
+                  <option value="">— kies deal —</option>
                   {(dealsQ.data?.items ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               )}
@@ -596,7 +596,7 @@ function ActivityCreateModal({
 
           <label className="block">
             <span className="block text-[11px] uppercase tracking-wider text-slate-500 mb-1">
-              Onderwerp {companyQuotations.length > 0 && <span className="text-slate-400 ml-1">\u2014 of koppel aan een offerte hieronder</span>}
+              Onderwerp {companyQuotations.length > 0 && <span className="text-slate-400 ml-1">— of koppel aan een offerte hieronder</span>}
             </span>
             <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="bv. Bellen over voorstel"
               className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
@@ -612,10 +612,10 @@ function ActivityCreateModal({
                   if (q && !subject) setSubject(`Nabellen offerte ${q.reference}${q.subject ? `: ${q.subject}` : ""}`);
                 }
               }} className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm">
-                <option value="">\u2014 geen koppeling \u2014</option>
+                <option value="">— geen koppeling —</option>
                 {companyQuotations.map((q) => (
                   <option key={q.id} value={q.id}>
-                    {q.reference}{q.subject ? ` \u2014 ${q.subject.slice(0, 40)}` : ""}{q.status ? ` (${q.status})` : ""}
+                    {q.reference}{q.subject ? ` — ${q.subject.slice(0, 40)}` : ""}{q.status ? ` (${q.status})` : ""}
                   </option>
                 ))}
               </select>
@@ -638,7 +638,7 @@ function ActivityCreateModal({
               <span className="block text-[11px] uppercase tracking-wider text-slate-500 mb-1">Toegewezen aan collega</span>
               <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}
                 className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm">
-                <option value="">\u2014 mezelf \u2014</option>
+                <option value="">— mezelf —</option>
                 {(usersQ.data ?? []).map((u) => (
                   <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
                 ))}
@@ -664,7 +664,7 @@ function ActivityCreateModal({
           <button type="button" onClick={() => createMut.mutate()}
             disabled={!targetId || createMut.isPending}
             className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
-            {createMut.isPending ? "Bezig\u2026" : "Opslaan"}
+            {createMut.isPending ? "Bezig…" : "Opslaan"}
           </button>
         </div>
       </div>
@@ -701,21 +701,21 @@ function ActivityCompleteModal({
       <div className="w-full max-w-md rounded-lg bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <h2 className="text-base font-semibold">Call afronden</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">\u00d7</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">×</button>
         </div>
         <div className="space-y-3 p-4">
           <div className="text-sm text-slate-600">
-            {activity.subject || "(geen onderwerp)"}{activity.target_name ? ` \u2014 ${activity.target_name}` : ""}
+            {activity.subject || "(geen onderwerp)"}{activity.target_name ? ` — ${activity.target_name}` : ""}
           </div>
           {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">{error}</div>}
 
           <fieldset className="space-y-1">
             <legend className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Uitkomst</legend>
             {([
-              ["reached", "\u2705 Bereikt"],
-              ["voicemail", "\ud83d\udcde Voicemail ingesproken"],
-              ["no_answer", "\u274c Niet bereikt"],
-              ["not_relevant", "\ud83d\udeab Niet meer relevant"],
+              ["reached", "✅ Bereikt"],
+              ["voicemail", "📞 Voicemail ingesproken"],
+              ["no_answer", "❌ Niet bereikt"],
+              ["not_relevant", "🚫 Niet meer relevant"],
             ] as const).map(([v, label]) => (
               <label key={v} className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 hover:bg-slate-50 cursor-pointer">
                 <input type="radio" name="outcome" value={v} checked={outcome === v}
@@ -747,7 +747,7 @@ function ActivityCompleteModal({
           <button type="button" onClick={() => completeMut.mutate()}
             disabled={completeMut.isPending}
             className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
-            {completeMut.isPending ? "Bezig\u2026" : "Opslaan"}
+            {completeMut.isPending ? "Bezig…" : "Opslaan"}
           </button>
         </div>
       </div>

@@ -78,9 +78,9 @@ function QuoteStatusBadge({ status }: { status: string }) {
 }
 
 function fmtEUR(v: string | null): string {
-  if (v === null || v === undefined || v === "") return "\u2014";
+  if (v === null || v === undefined || v === "") return "—";
   const n = Number(v);
-  if (!Number.isFinite(n) || n === 0) return "\u2014";
+  if (!Number.isFinite(n) || n === 0) return "—";
   return new Intl.NumberFormat("nl-NL", {
     style: "currency",
     currency: "EUR",
@@ -89,7 +89,7 @@ function fmtEUR(v: string | null): string {
 }
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   return new Date(iso).toLocaleDateString("nl-NL", {
     day: "numeric",
     month: "short",
@@ -98,7 +98,7 @@ function fmtDate(iso: string | null): string {
 }
 
 function PhoneLink({ phone }: { phone: string | null }) {
-  if (!phone) return <span className="text-slate-400">\u2014</span>;
+  if (!phone) return <span className="text-slate-400">—</span>;
   // Render as <span> with onClick handler instead of <a> because this
   // component is rendered inside a <Link> (router <a>). Nested <a> tags
   // are invalid HTML and many browsers drop the outer link entirely.
@@ -176,7 +176,7 @@ export function Deals() {
           <div>
             <h1 className="text-lg font-medium">Deals</h1>
             <div className="mt-0.5 text-xs text-slate-500">
-              {summary?.open_count} open \u00b7 {fmtEUR(summary?.open_amount ?? null)} in pipeline
+              {summary?.open_count} open · {fmtEUR(summary?.open_amount ?? null)} in pipeline
             </div>
           </div>
         </div>
@@ -215,7 +215,7 @@ export function Deals() {
           <input
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Zoek op deal, bedrijf, contact\u2026"
+            placeholder="Zoek op deal, bedrijf, contact…"
             className="ml-auto min-w-[200px] rounded-md border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
@@ -230,7 +230,7 @@ export function Deals() {
         </div>
 
         {listQ.isLoading && (
-          <div className="px-4 py-6 text-sm text-slate-500">Bezig met laden\u2026</div>
+          <div className="px-4 py-6 text-sm text-slate-500">Bezig met laden…</div>
         )}
 
         {!listQ.isLoading && items.length === 0 && (
@@ -251,8 +251,8 @@ export function Deals() {
                 {d.stage_name && <span>{d.stage_name}</span>}
                 {d.quotation_count > 0 && (
                   <>
-                    <span>\u00b7</span>
-                    <span>{d.quotation_count}\u00d7 offerte</span>
+                    <span>·</span>
+                    <span>{d.quotation_count}× offerte</span>
                     {d.last_quotation_status && (
                       <QuoteStatusBadge status={d.last_quotation_status} />
                     )}
@@ -266,7 +266,7 @@ export function Deals() {
                   {d.company_name}
                 </span>
               ) : (
-                <span className="text-sm text-slate-400">\u2014</span>
+                <span className="text-sm text-slate-400">—</span>
               )}
             </div>
             <div className="min-w-0">

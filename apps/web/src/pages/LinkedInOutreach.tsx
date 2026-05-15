@@ -76,7 +76,7 @@ function TaskCard({ t, onPatch, onDelete }: {
       <div className="text-xs font-medium">{t.company_name ?? "Unknown company"}</div>
       <div className="mt-0.5 text-[11px] text-slate-500">
         {KIND_LABELS[t.kind]}
-        {t.contact_name && <> \u00b7 {t.contact_name}</>}
+        {t.contact_name && <> · {t.contact_name}</>}
       </div>
       {t.suggested_text && (
         <div className="mt-2 rounded bg-slate-50 px-2 py-1.5 text-[11px] text-slate-700 leading-relaxed font-mono">
@@ -99,7 +99,7 @@ function TaskCard({ t, onPatch, onDelete }: {
             rel="noreferrer"
             className="flex-1 rounded border border-slate-300 px-2 py-1 text-center text-[10px] hover:bg-slate-50"
           >
-            Open \u2197
+            Open ↗
           </a>
         )}
       </div>
@@ -119,7 +119,7 @@ function TaskCard({ t, onPatch, onDelete }: {
           className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-red-50 hover:text-red-700"
           aria-label="Delete task"
         >
-          \u2715
+          ✕
         </button>
       </div>
       {t.replied_at && (
@@ -186,9 +186,9 @@ export function LinkedInOutreach() {
             <div className="mt-0.5 text-xs text-slate-500">
               Posts &amp; outreach tasks
               {integrationQ.data?.is_configured ? (
-                <> \u00b7 <span className="text-emerald-700">connected</span></>
+                <> · <span className="text-emerald-700">connected</span></>
               ) : (
-                <> \u00b7 <span className="text-amber-700">not connected</span></>
+                <> · <span className="text-amber-700">not connected</span></>
               )}
             </div>
           </div>
@@ -228,7 +228,7 @@ export function LinkedInOutreach() {
         {tab === "tasks" && (
           <div className="p-4">
             {tasksQ.isLoading && (
-              <div className="text-sm text-slate-500">Loading\u2026</div>
+              <div className="text-sm text-slate-500">Loading…</div>
             )}
             {!tasksQ.isLoading && tasks.length === 0 && (
               <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
@@ -275,7 +275,7 @@ export function LinkedInOutreach() {
               </div>
             )}
             <div className="mt-2 text-xs text-slate-500">
-              Posts gebruiken de officiële LinkedIn API \u2014 nul ban-risico.
+              Posts gebruiken de officiële LinkedIn API — nul ban-risico.
             </div>
           </div>
         )}

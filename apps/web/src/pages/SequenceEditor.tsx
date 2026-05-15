@@ -71,7 +71,7 @@ function BucketPill({ bucket }: { bucket: string | null }) {
       style={{ backgroundColor: s.bg, color: s.text }}
     >
       <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: s.dot }} />
-      {bucket === "hot" ? "Hot \u226580" : bucket === "warm" ? "Warm 50-79" : "Cold <50"}
+      {bucket === "hot" ? "Hot ≥80" : bucket === "warm" ? "Warm 50-79" : "Cold <50"}
     </span>
   );
 }
@@ -149,7 +149,7 @@ export function SequenceEditor() {
   });
 
   if (seqQ.isLoading || !draft) {
-    return <div className="text-sm text-slate-500">Loading\u2026</div>;
+    return <div className="text-sm text-slate-500">Loading…</div>;
   }
   if (seqQ.isError) {
     return (
@@ -193,7 +193,7 @@ export function SequenceEditor() {
       <div className="overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">
         <div className="border-b border-slate-200 px-4 py-3">
           <Link to="/sequences" className="text-xs text-slate-500 hover:text-slate-900">
-            \u2190 All sequences
+            ← All sequences
           </Link>
           <div className="mt-1 flex items-center gap-2">
             <BucketPill bucket={draft.auto_enroll_bucket} />
@@ -262,7 +262,7 @@ export function SequenceEditor() {
             </div>
 
             {stepsQ.isLoading && (
-              <div className="text-sm text-slate-500">Loading steps\u2026</div>
+              <div className="text-sm text-slate-500">Loading steps…</div>
             )}
 
             {steps.length === 0 && !stepsQ.isLoading && (
@@ -319,7 +319,7 @@ export function SequenceEditor() {
                 className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
               >
                 <option value="">Manual only</option>
-                <option value="hot">Hot prospects (\u226580)</option>
+                <option value="hot">Hot prospects (≥80)</option>
                 <option value="warm">Warm prospects (50-79)</option>
                 <option value="cold">Cold prospects (&lt;50)</option>
               </select>
@@ -349,7 +349,7 @@ export function SequenceEditor() {
                 className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
               />
               <div className="mt-1 text-[10px] text-slate-500">
-                Sending domain is set in Settings \u2192 Mailgun.
+                Sending domain is set in Settings → Mailgun.
               </div>
             </div>
 
@@ -396,7 +396,7 @@ export function SequenceEditor() {
                     }}
                     className="flex-1 rounded-md border border-slate-300 px-1 py-0.5 text-xs"
                   />
-                  <span className="text-slate-400">\u2013</span>
+                  <span className="text-slate-400">–</span>
                   <input
                     type="time"
                     value={slot.end}
@@ -518,7 +518,7 @@ function StepCard({
           className="ml-auto rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-700"
           aria-label="Delete step"
         >
-          \u2715
+          ✕
         </button>
       </div>
 
@@ -554,7 +554,7 @@ function StepCard({
             }}
             placeholder={
               step.kind === "linkedin_connect"
-                ? "Connect message (\u2264 200 chars)"
+                ? "Connect message (≤ 200 chars)"
                 : step.kind === "linkedin_dm"
                   ? "DM message"
                   : step.kind === "linkedin_like" || step.kind === "linkedin_visit"

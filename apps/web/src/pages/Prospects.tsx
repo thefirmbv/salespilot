@@ -309,7 +309,7 @@ export function Prospects() {
           <div className="p-10 text-center text-sm text-slate-500">
             {hasAnyFilter
               ? "No prospects match these filters."
-              : "No prospects yet. Connect ProspectPRO in Settings \u2192 Integrations, then click Sync."}
+              : "No prospects yet. Connect ProspectPRO in Settings → Integrations, then click Sync."}
           </div>
         )}
 

@@ -52,11 +52,11 @@ type InviteResult = {
 const ROLES = ["owner", "admin", "member", "viewer"];
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   return new Date(iso).toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" });
 }
 function fmtRelative(iso: string | null): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   const d = new Date(iso);
   const ms = Date.now() - d.getTime();
   const h = Math.floor(ms / 3600000);
@@ -188,7 +188,7 @@ function UsersTab({ me }: { me: Me | undefined }) {
         </div>
       )}
 
-      {usersQ.isLoading && <div className="text-sm text-slate-500">Bezig met laden\u2026</div>}
+      {usersQ.isLoading && <div className="text-sm text-slate-500">Bezig met laden…</div>}
       <div className="space-y-2">
         {(usersQ.data ?? []).map((u) => (
           <div key={u.id} className="rounded-md border border-slate-200 bg-white p-3">
@@ -320,7 +320,7 @@ function InviteForm({ me, orgs, onSubmit, pending }: {
             is_platform_admin: isPlatformAdmin,
           })}
           className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
-          {pending ? "Bezig\u2026" : "Stuur uitnodiging"}
+          {pending ? "Bezig…" : "Stuur uitnodiging"}
         </button>
       </div>
     </div>
@@ -398,7 +398,7 @@ function OrgForm({ onSubmit, pending }: { onSubmit: (d: { name: string; slug: st
           disabled={!name.trim() || !slug.trim() || pending}
           onClick={() => onSubmit({ name: name.trim(), slug: slug.trim() })}
           className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
-          {pending ? "Bezig\u2026" : "Aanmaken"}
+          {pending ? "Bezig…" : "Aanmaken"}
         </button>
       </div>
     </div>

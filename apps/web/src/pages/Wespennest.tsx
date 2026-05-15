@@ -88,11 +88,11 @@ type PipelineRun = {
 type PipelineStatus = { jobs: Record<string, PipelineRun | null> };
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   return new Date(iso).toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" });
 }
 function fmtTime(iso: string | null): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   const d = new Date(iso);
   const today = new Date();
   if (d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear()) {
@@ -129,13 +129,13 @@ export function Wespennest() {
     <div>
       <div className="overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">
         <div className="border-b border-slate-200 px-4 py-3">
-          <h1 className="text-lg font-medium"><span className="mr-1">\ud83d\udc1d</span> Wespennest</h1>
+          <h1 className="text-lg font-medium"><span className="mr-1">🐝</span> Wespennest</h1>
           <div className="mt-0.5 text-xs text-slate-500">
-            Acquisitie-engine \u00b7 klanten van overgenomen MSP&apos;s identificeren en benaderen via mail + telefoon
+            Acquisitie-engine · klanten van overgenomen MSP&apos;s identificeren en benaderen via mail + telefoon
           </div>
         </div>
         <div className="flex gap-1 border-b border-slate-200 px-4">
-          {[["dashboard","Dashboard"],["leads","Leads"],["msps","MSP\u2019s"],["discovery","Klanten zoeken"],["attribution","Toegekend"],["feed","Overname-feed"],["pipeline","Pipeline"]].map(([id, label]) => (
+          {[["dashboard","Dashboard"],["leads","Leads"],["msps","MSP’s"],["discovery","Klanten zoeken"],["attribution","Toegekend"],["feed","Overname-feed"],["pipeline","Pipeline"]].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${tab === id ? "border-brand-500 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
               {label}
@@ -184,7 +184,7 @@ function DashboardTab() {
                 <div key={kind} className="flex items-center justify-between text-sm">
                   <span className="truncate">{JOB_LABELS[kind] ?? kind}</span>
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${tone}`}>
-                    {run ? `${run.status} \u00b7 ${fmtTime(run.started_at)}` : "nog niet gedraaid"}
+                    {run ? `${run.status} · ${fmtTime(run.started_at)}` : "nog niet gedraaid"}
                   </span>
                 </div>
               );
@@ -206,7 +206,7 @@ function DashboardTab() {
                 <div key={l.kvk_company_id} className="text-sm">
                   <div className="font-medium truncate">{l.handelsnaam}</div>
                   <div className="text-[11px] text-slate-500">
-                    {l.contact_naam ?? "(geen contact)"} \u00b7 {l.km_to_hq?.toFixed(0) ?? "?"} km \u00b7 {l.msp_name ?? "?"}
+                    {l.contact_naam ?? "(geen contact)"} · {l.km_to_hq?.toFixed(0) ?? "?"} km · {l.msp_name ?? "?"}
                   </div>
                 </div>
               ))}
@@ -253,7 +253,7 @@ function MspsTab() {
         </button>
       </div>
       {showForm && <MspForm onSubmit={(d) => createMut.mutate(d)} pending={createMut.isPending} />}
-      {mspsQ.isLoading && <div className="text-sm text-slate-500">Bezig met laden\u2026</div>}
+      {mspsQ.isLoading && <div className="text-sm text-slate-500">Bezig met laden…</div>}
       {(mspsQ.data ?? []).length > 0 && (
         <div className="overflow-hidden rounded-md border border-slate-200">
           <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1.5fr)_110px_90px_90px_90px] gap-3 bg-slate-50 px-3 py-2 text-[10px] uppercase tracking-wider text-slate-500">
@@ -271,7 +271,7 @@ function MspsTab() {
                 {m.region && <div className="text-[11px] text-slate-500">{m.region}</div>}
               </div>
               <div>
-                <div>{m.acquired_by ?? "\u2014"}</div>
+                <div>{m.acquired_by ?? "—"}</div>
                 {m.investor && m.investor !== m.acquired_by && (
                   <div className="text-[11px] text-slate-500">via {m.investor}</div>
                 )}
@@ -329,7 +329,7 @@ function MspForm({ onSubmit, pending }: { onSubmit: (d: Partial<Msp>) => void; p
             notes: notes.trim() || undefined,
           })}
           className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
-          {pending ? "Opslaan\u2026" : "Opslaan"}
+          {pending ? "Opslaan…" : "Opslaan"}
         </button>
       </div>
     </div>
@@ -397,12 +397,12 @@ function LeadsTab() {
             </select>
           </FilterField>
         </div>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Zoek op bedrijf, contact, MSP of plaats\u2026" className="mt-2 w-full rounded-md border border-slate-300 px-2 py-1 text-sm" />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Zoek op bedrijf, contact, MSP of plaats…" className="mt-2 w-full rounded-md border border-slate-300 px-2 py-1 text-sm" />
       </div>
-      <div className="text-[11px] text-slate-500">{leadsQ.isLoading ? "Bezig met laden\u2026" : `${items.length} leads`}</div>
+      <div className="text-[11px] text-slate-500">{leadsQ.isLoading ? "Bezig met laden…" : `${items.length} leads`}</div>
       {!leadsQ.isLoading && items.length === 0 && (
         <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
-          <div className="text-3xl mb-2">\ud83d\udd0d</div>
+          <div className="text-3xl mb-2">🔍</div>
           <div className="font-medium text-slate-700">Nog geen leads gevonden</div>
           <div className="mt-1">De pipeline staat klaar maar heeft nog geen data verzameld. Activeer eerst de Python-modules op de Pipeline-tab, of voeg test-data toe via de API.</div>
         </div>
@@ -420,15 +420,15 @@ function LeadCard({ lead, onConvert, converting }: { lead: Lead; onConvert: () =
           <div className="flex items-baseline gap-2 flex-wrap">
             <div className="truncate font-medium">{lead.handelsnaam}</div>
             {lead.werkzame_personen && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-700">{lead.werkzame_personen} fte</span>}
-            {lead.has_m365 === true && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-800">M365 \u2713</span>}
+            {lead.has_m365 === true && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-800">M365 ✓</span>}
             {lead.km_to_hq != null && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] text-blue-800">{lead.km_to_hq.toFixed(0)} km</span>}
           </div>
           <div className="text-[11px] text-slate-500">
-            {lead.rechtsvorm && <>{lead.rechtsvorm} \u00b7 </>}{lead.plaats}{lead.domain && <> \u00b7 {lead.domain}</>}
+            {lead.rechtsvorm && <>{lead.rechtsvorm} · </>}{lead.plaats}{lead.domain && <> · {lead.domain}</>}
           </div>
           {lead.msp_name && (
             <div className="mt-1 text-[11px] text-amber-900">
-              <span className="rounded bg-amber-50 px-1.5 py-0.5">\ud83d\udc1d {lead.msp_name}{lead.msp_acquired_by && lead.msp_acquired_by !== lead.msp_name && <> &rarr; {lead.msp_acquired_by}</>}{lead.msp_acquired_date && <> ({fmtDate(lead.msp_acquired_date)})</>}</span>
+              <span className="rounded bg-amber-50 px-1.5 py-0.5">🐝 {lead.msp_name}{lead.msp_acquired_by && lead.msp_acquired_by !== lead.msp_name && <> &rarr; {lead.msp_acquired_by}</>}{lead.msp_acquired_date && <> ({fmtDate(lead.msp_acquired_date)})</>}</span>
             </div>
           )}
         </div>
@@ -436,23 +436,23 @@ function LeadCard({ lead, onConvert, converting }: { lead: Lead; onConvert: () =
           {lead.contact_naam ? (
             <>
               <div className="font-medium">{lead.contact_naam}</div>
-              <div className="text-[11px] text-slate-500">{lead.contact_functie ?? "\u2014"}</div>
-              {lead.contact_email && <a href={`mailto:${lead.contact_email}`} className="block text-[11px] text-brand-600 hover:underline truncate">{lead.contact_email} {lead.contact_email_verified === "verified" && <span className="text-emerald-700">\u2713</span>}</a>}
+              <div className="text-[11px] text-slate-500">{lead.contact_functie ?? "—"}</div>
+              {lead.contact_email && <a href={`mailto:${lead.contact_email}`} className="block text-[11px] text-brand-600 hover:underline truncate">{lead.contact_email} {lead.contact_email_verified === "verified" && <span className="text-emerald-700">✓</span>}</a>}
               {lead.contact_telefoon && <a href={`tel:${lead.contact_telefoon}`} className="block text-[11px] text-slate-700 font-mono hover:text-brand-600">{lead.contact_telefoon}</a>}
             </>
           ) : (
             <div className="text-slate-400 text-xs">Geen decision-maker gevonden</div>
           )}
-          {lead.telefoon_bedrijf && !lead.contact_telefoon && <a href={`tel:${lead.telefoon_bedrijf}`} className="block text-[11px] text-slate-700 font-mono hover:text-brand-600">\ud83d\udcde {lead.telefoon_bedrijf}</a>}
+          {lead.telefoon_bedrijf && !lead.contact_telefoon && <a href={`tel:${lead.telefoon_bedrijf}`} className="block text-[11px] text-slate-700 font-mono hover:text-brand-600">📞 {lead.telefoon_bedrijf}</a>}
         </div>
         <div className="flex flex-col gap-1 text-xs">
           {lead.existing_contact_id ? (
-            <Link to={`/companies/${lead.existing_contact_id}`} className="rounded-md border border-slate-300 px-2 py-1 text-center hover:bg-slate-50">Bekijk in CRM \u2197</Link>
+            <Link to={`/companies/${lead.existing_contact_id}`} className="rounded-md border border-slate-300 px-2 py-1 text-center hover:bg-slate-50">Bekijk in CRM ↗</Link>
           ) : (
-            <button onClick={onConvert} disabled={converting} className="rounded-md bg-brand-500 px-2 py-1 text-white hover:bg-brand-600 disabled:opacity-50">{converting ? "Bezig\u2026" : "Maak prospect"}</button>
+            <button onClick={onConvert} disabled={converting} className="rounded-md bg-brand-500 px-2 py-1 text-white hover:bg-brand-600 disabled:opacity-50">{converting ? "Bezig…" : "Maak prospect"}</button>
           )}
-          {lead.contact_email && <a href={`mailto:${lead.contact_email}`} className="rounded-md border border-slate-300 px-2 py-1 text-center hover:bg-slate-50">\u2709 Mail</a>}
-          {(lead.contact_telefoon || lead.telefoon_bedrijf) && <a href={`tel:${lead.contact_telefoon || lead.telefoon_bedrijf}`} className="rounded-md border border-slate-300 px-2 py-1 text-center hover:bg-slate-50">\ud83d\udcde Bel</a>}
+          {lead.contact_email && <a href={`mailto:${lead.contact_email}`} className="rounded-md border border-slate-300 px-2 py-1 text-center hover:bg-slate-50">✉ Mail</a>}
+          {(lead.contact_telefoon || lead.telefoon_bedrijf) && <a href={`tel:${lead.contact_telefoon || lead.telefoon_bedrijf}`} className="rounded-md border border-slate-300 px-2 py-1 text-center hover:bg-slate-50">📞 Bel</a>}
         </div>
       </div>
     </div>
@@ -498,13 +498,13 @@ function FeedTab() {
         </div>
         <button onClick={() => triggerMut.mutate()} disabled={triggerMut.isPending}
           className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50">
-          {triggerMut.isPending ? "Bezig\u2026" : "Scan RSS-bronnen"}
+          {triggerMut.isPending ? "Bezig…" : "Scan RSS-bronnen"}
         </button>
       </div>
-      {signalsQ.isLoading && <div className="text-sm text-slate-500">Bezig met laden\u2026</div>}
+      {signalsQ.isLoading && <div className="text-sm text-slate-500">Bezig met laden…</div>}
       {!signalsQ.isLoading && items.length === 0 && (
         <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
-          <div className="text-3xl mb-2">\ud83d\udcf0</div>
+          <div className="text-3xl mb-2">📰</div>
           <div className="font-medium text-slate-700">Geen overname-signalen</div>
           <div className="mt-1">Klik op &laquo;Scan RSS-bronnen&raquo; om Computable, Dutch IT Channel, Mena en Emerce af te zoeken.<br />
             Elke 4 uur draait dit automatisch via de AI-classifier.</div>
@@ -516,8 +516,8 @@ function FeedTab() {
             <div className="min-w-0">
               <a href={s.source_url} target="_blank" rel="noreferrer" className="text-sm font-medium hover:text-brand-600">{s.title}</a>
               <div className="text-[11px] text-slate-500">
-                {s.source} \u00b7 {fmtDate(s.published_at)}
-                {s.matched_keywords && s.matched_keywords.length > 0 && <> \u00b7 {s.matched_keywords.map((k) => `#${k}`).join(" ")}</>}
+                {s.source} · {fmtDate(s.published_at)}
+                {s.matched_keywords && s.matched_keywords.length > 0 && <> · {s.matched_keywords.map((k) => `#${k}`).join(" ")}</>}
               </div>
               {s.excerpt && <div className="mt-1 text-xs text-slate-700 line-clamp-2">{s.excerpt}</div>}
             </div>
@@ -541,7 +541,7 @@ function FeedTab() {
               }`}>{s.status}</span>
             </div>
           </div>
-          {s.msp_name && <div className="mt-2 text-[11px] text-slate-500">\ud83d\udc1d Toegevoegd als MSP: {s.msp_name}</div>}
+          {s.msp_name && <div className="mt-2 text-[11px] text-slate-500">🐝 Toegevoegd als MSP: {s.msp_name}</div>}
         </div>
       ))}
     </div>
@@ -593,8 +593,8 @@ function PipelineTab() {
                     }`}>{run.status}</span>
                   ) : <span className="text-[11px] text-slate-400">nog niet gedraaid</span>}
                 </div>
-                <div className="text-right tabular-nums text-xs">{run?.items_processed ?? "\u2014"}</div>
-                <div className="text-right tabular-nums text-xs text-slate-500">{run?.duration_seconds != null ? `${run.duration_seconds.toFixed(1)}s` : "\u2014"}</div>
+                <div className="text-right tabular-nums text-xs">{run?.items_processed ?? "—"}</div>
+                <div className="text-right tabular-nums text-xs text-slate-500">{run?.duration_seconds != null ? `${run.duration_seconds.toFixed(1)}s` : "—"}</div>
                 <div className="text-right">
                   <button onClick={() => triggerMut.mutate(kind)} disabled={triggerMut.isPending}
                     className="rounded-md border border-slate-300 px-2 py-0.5 text-[11px] hover:bg-slate-50 disabled:opacity-50">Run</button>
@@ -620,10 +620,10 @@ function PipelineTab() {
               </div>
               <div className="truncate">
                 <span className="font-medium">{JOB_LABELS[r.job_kind] ?? r.job_kind}</span>
-                {r.message && <span className="text-slate-500"> \u00b7 {r.message}</span>}
+                {r.message && <span className="text-slate-500"> · {r.message}</span>}
               </div>
               <div className="text-right tabular-nums">{r.items_processed}</div>
-              <div className="text-right tabular-nums text-slate-500">{r.duration_seconds != null ? `${r.duration_seconds.toFixed(1)}s` : "\u2014"}</div>
+              <div className="text-right tabular-nums text-slate-500">{r.duration_seconds != null ? `${r.duration_seconds.toFixed(1)}s` : "—"}</div>
             </div>
           ))}
         </div>

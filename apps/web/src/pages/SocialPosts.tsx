@@ -68,7 +68,7 @@ type Summary = {
 };
 
 function fmtDate(iso: string | null, withTime = false): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   const d = new Date(iso);
   if (withTime) {
     return d.toLocaleString("nl-NL", {
@@ -124,10 +124,10 @@ export function SocialPosts() {
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
             <h1 className="text-lg font-medium">
-              <span className="mr-1">\ud83d\udcac</span> LinkedIn content
+              <span className="mr-1">💬</span> LinkedIn content
             </h1>
             <div className="mt-0.5 text-xs text-slate-500">
-              Schrijf, plan en publiceer LinkedIn-posts vanuit \u00e9\u00e9n plek
+              Schrijf, plan en publiceer LinkedIn-posts vanuit één plek
             </div>
           </div>
           <Link to="/social/new"
@@ -183,7 +183,7 @@ function ListView() {
           </button>
         ))}
       </div>
-      {postsQ.isLoading && <div className="text-sm text-slate-500">Bezig met laden\u2026</div>}
+      {postsQ.isLoading && <div className="text-sm text-slate-500">Bezig met laden…</div>}
       {!postsQ.isLoading && posts.length === 0 && <EmptyState />}
       <div className="space-y-2">
         {posts.map((p) => <PostRow key={p.id} post={p} />)}
@@ -195,7 +195,7 @@ function ListView() {
 function EmptyState() {
   return (
     <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
-      <div className="text-3xl mb-2">\u270f\ufe0f</div>
+      <div className="text-3xl mb-2">✏️</div>
       <div className="font-medium text-slate-700">Nog geen posts</div>
       <div className="mt-1">Klik op <b>+ Nieuwe post</b> om je eerste LinkedIn-bericht te maken.</div>
     </div>
@@ -229,10 +229,10 @@ function PostRow({ post }: { post: Post }) {
           </div>
           <div className="text-[11px] text-slate-500 line-clamp-1 mt-1">{post.body}</div>
           <div className="text-[10px] text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
-            {post.media.length > 0 && <span>\ud83d\udcce {post.media.length}</span>}
+            {post.media.length > 0 && <span>📎 {post.media.length}</span>}
             {post.destinations.map((d) => (
               <span key={d.target_urn} className="rounded bg-slate-100 px-1.5 py-0.5">
-                {d.target_type === "person" ? "\ud83d\udc64" : "\ud83c\udfe2"} {d.target_name}
+                {d.target_type === "person" ? "👤" : "🏢"} {d.target_name}
               </span>
             ))}
           </div>
@@ -247,7 +247,7 @@ function PostRow({ post }: { post: Post }) {
           {post.status === "published" && (
             <>
               <div className="text-[10px] uppercase tracking-wider text-slate-500">Auteur</div>
-              <div className="truncate">{post.creator_name ?? "\u2014"}</div>
+              <div className="truncate">{post.creator_name ?? "—"}</div>
             </>
           )}
           {post.status === "failed" && post.last_error && (
@@ -298,10 +298,10 @@ function CalendarView() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <button onClick={() => setMonthStart(new Date(monthStart.getFullYear(), monthStart.getMonth() - 1, 1))}
-          className="rounded-md border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50">\u2190 Vorige</button>
+          className="rounded-md border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50">← Vorige</button>
         <div className="text-sm font-medium capitalize">{monthLabel}</div>
         <button onClick={() => setMonthStart(new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 1))}
-          className="rounded-md border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50">Volgende \u2192</button>
+          className="rounded-md border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50">Volgende →</button>
       </div>
       <div className="grid grid-cols-7 gap-1 text-[10px] uppercase tracking-wider text-slate-500">
         {["ma","di","wo","do","vr","za","zo"].map((d) => <div key={d} className="px-2 py-1">{d}</div>)}
@@ -473,7 +473,7 @@ export function SocialPostEditor() {
     <div>
       <div className="overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">
         <div className="border-b border-slate-200 px-4 py-3">
-          <Link to="/social" className="text-xs text-slate-500 hover:text-slate-900">\u2190 Alle posts</Link>
+          <Link to="/social" className="text-xs text-slate-500 hover:text-slate-900">← Alle posts</Link>
           <h1 className="mt-1 text-lg font-medium">
             {isNew ? "Nieuwe LinkedIn post" : post?.title || "Post bewerken"}
           </h1>
@@ -509,7 +509,7 @@ export function SocialPostEditor() {
                 </span>
               </div>
               <textarea value={body} disabled={isReadOnly} onChange={(e) => setBody(e.target.value)} rows={14}
-                placeholder="Schrijf je post hier\u2026 Tip: laat de eerste 2 regels pakkend zijn \u2014 daarna komt 'lees meer'."
+                placeholder="Schrijf je post hier… Tip: laat de eerste 2 regels pakkend zijn — daarna komt 'lees meer'."
                 className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm leading-relaxed" />
             </label>
             <div>
@@ -533,7 +533,7 @@ export function SocialPostEditor() {
                     {!isReadOnly && (
                       <button onClick={() => removeMedia(m.id)}
                         className="absolute top-1 right-1 rounded-full bg-white/90 px-1.5 text-xs opacity-0 group-hover:opacity-100"
-                        title="Verwijder">\u00d7</button>
+                        title="Verwijder">×</button>
                     )}
                     <div className="px-1 py-0.5 text-[10px] text-slate-500 truncate">{m.filename}</div>
                   </div>
@@ -549,7 +549,7 @@ export function SocialPostEditor() {
               <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Posten naar</div>
               {destsQ.isError && (
                 <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                  Kan LinkedIn-bestemmingen niet ophalen. Controleer Settings \u2192 Integrations \u2192 LinkedIn (access token).
+                  Kan LinkedIn-bestemmingen niet ophalen. Controleer Settings → Integrations → LinkedIn (access token).
                 </div>
               )}
               {!destsQ.isError && (destsQ.data?.length ?? 0) === 0 && !destsQ.isLoading && (
@@ -567,7 +567,7 @@ export function SocialPostEditor() {
                           if (e.target.checked) setSelectedDest([...selectedDest, d]);
                           else setSelectedDest(selectedDest.filter((x) => x.target_urn !== d.target_urn));
                         }} />
-                      <span className="text-base">{d.target_type === "person" ? "\ud83d\udc64" : "\ud83c\udfe2"}</span>
+                      <span className="text-base">{d.target_type === "person" ? "👤" : "🏢"}</span>
                       <span className="flex-1">{d.target_name}</span>
                       <span className="text-[10px] text-slate-500">{d.target_type}</span>
                     </label>
@@ -595,7 +595,7 @@ export function SocialPostEditor() {
                 <button disabled={upsertMut.isPending || !body.trim()}
                   onClick={() => upsertMut.mutate({ status: "draft" })}
                   className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50">
-                  {upsertMut.isPending ? "Bezig\u2026" : "Concept opslaan"}
+                  {upsertMut.isPending ? "Bezig…" : "Concept opslaan"}
                 </button>
                 <button
                   disabled={upsertMut.isPending || !body.trim() || !scheduledLocal || selectedDest.length === 0}
@@ -609,7 +609,7 @@ export function SocialPostEditor() {
                   onClick={() => publishMut.mutate()}
                   className="w-full rounded-md bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
                   title={selectedDest.length === 0 ? "Kies eerst een bestemming" : ""}>
-                  {publishMut.isPending ? "Bezig met posten\u2026" : "Nu publiceren"}
+                  {publishMut.isPending ? "Bezig met posten…" : "Nu publiceren"}
                 </button>
               </div>
             )}
@@ -621,13 +621,13 @@ export function SocialPostEditor() {
                 {post.publish_result.map((r, i) => (
                   <div key={i} className="text-xs">
                     <div className="flex items-center gap-1">
-                      <span>{r.error ? "\u274c" : "\u2705"}</span>
+                      <span>{r.error ? "❌" : "✅"}</span>
                       <span className="truncate">{r.target_name}</span>
                     </div>
                     {r.error && <div className="text-red-700 ml-4">{r.error}</div>}
                     {r.post_url && (
                       <a href={r.post_url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline ml-4">
-                        Bekijk op LinkedIn \u2197
+                        Bekijk op LinkedIn ↗
                       </a>
                     )}
                   </div>
@@ -654,7 +654,7 @@ function LinkedInPreview({
         <div className="min-w-0">
           <div className="text-sm font-semibold truncate">{authorName}</div>
           <div className="text-[10px] text-slate-500">
-            {authorType === "organization" ? "Bedrijfspagina" : "Persoonlijk profiel"} \u00b7 zojuist \u00b7 \ud83c\udf10
+            {authorType === "organization" ? "Bedrijfspagina" : "Persoonlijk profiel"} · zojuist · 🌐
           </div>
         </div>
       </div>
@@ -673,14 +673,14 @@ function LinkedInPreview({
         </div>
       )}
       <div className="flex justify-between items-center px-3 py-2 border-t border-slate-200 text-[11px] text-slate-500">
-        <span>\ud83d\udc4d \u2764\ufe0f \ud83d\udc4f 32</span>
+        <span>👍 ❤️ 👏 32</span>
         <span>4 reacties</span>
       </div>
       <div className="grid grid-cols-4 border-t border-slate-200 text-xs text-slate-600">
-        <button className="py-2 hover:bg-slate-50">\ud83d\udc4d Like</button>
-        <button className="py-2 hover:bg-slate-50">\ud83d\udcac Reageer</button>
-        <button className="py-2 hover:bg-slate-50">\ud83d\udd01 Repost</button>
-        <button className="py-2 hover:bg-slate-50">\ud83d\udce4 Verstuur</button>
+        <button className="py-2 hover:bg-slate-50">👍 Like</button>
+        <button className="py-2 hover:bg-slate-50">💬 Reageer</button>
+        <button className="py-2 hover:bg-slate-50">🔁 Repost</button>
+        <button className="py-2 hover:bg-slate-50">📤 Verstuur</button>
       </div>
     </div>
   );

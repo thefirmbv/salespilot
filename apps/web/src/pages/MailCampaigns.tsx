@@ -72,7 +72,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "\u2014";
+  if (!iso) return "—";
   return new Date(iso).toLocaleDateString("nl-NL", {
     day: "numeric", month: "short", year: "numeric",
   });
@@ -159,7 +159,7 @@ export function MailCampaigns() {
             <div className="mt-0.5 text-xs text-slate-500">
               Nieuwsbrieven en mailings vanuit HaloPSA
               {summary && all.length > 0 && (
-                <> \u00b7 {summary.total_campaigns} campagnes</>
+                <> · {summary.total_campaigns} campagnes</>
               )}
             </div>
           </div>
@@ -168,7 +168,7 @@ export function MailCampaigns() {
             disabled={syncMut.isPending}
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
           >
-            {syncMut.isPending ? "Bezig\u2026" : "Sync HaloPSA"}
+            {syncMut.isPending ? "Bezig…" : "Sync HaloPSA"}
           </button>
         </div>
 
@@ -240,20 +240,20 @@ export function MailCampaigns() {
             <input
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Zoek\u2026"
+              placeholder="Zoek…"
               className="ml-auto min-w-[200px] rounded-md border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
         )}
 
         {listQ.isLoading && (
-          <div className="px-4 py-6 text-sm text-slate-500">Bezig met laden\u2026</div>
+          <div className="px-4 py-6 text-sm text-slate-500">Bezig met laden…</div>
         )}
 
         {noCampaigns && (
           <div className="px-4 py-12 text-center">
             <div className="mx-auto max-w-md">
-              <div className="text-4xl mb-3">\ud83d\udce7</div>
+              <div className="text-4xl mb-3">📧</div>
               <h2 className="text-base font-medium text-slate-900">Nog geen campagnes</h2>
               <p className="mt-2 text-sm text-slate-600">
                 Mail Campaigns worden in HaloPSA opgesteld. Druk op <b>Sync HaloPSA</b> hierboven
@@ -262,7 +262,7 @@ export function MailCampaigns() {
               <div className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-left text-xs text-amber-900">
                 <strong>Tip:</strong> als de sync een &ldquo;permission ontbreekt&rdquo;
                 melding geeft, voeg dan in HaloPSA bij{" "}
-                <em>Configuration \u2192 Integrations \u2192 API \u2192 Applications</em>{" "}
+                <em>Configuration → Integrations → API → Applications</em>{" "}
                 de permissie <b>Mail Campaign (Read)</b> toe aan de SalesPilot API-app.
               </div>
             </div>

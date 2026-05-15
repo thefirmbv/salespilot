@@ -456,10 +456,10 @@ type CommsResponse = {
 };
 
 const KIND_LABEL: Record<CommEntry["kind"], { icon: string; label: string; bg: string; fg: string }> = {
-  campaign_mail:  { icon: "\u2709",        label: "Campagne-mail",  bg: "#E6F1FB", fg: "#0C447C" },
-  sequence_mail:  { icon: "\u27a4",        label: "Sequence-mail",  bg: "#FAEEDA", fg: "#854F0B" },
-  linkedin_post:  { icon: "\ud83d\udcac",  label: "LinkedIn post",  bg: "#EEEDFE", fg: "#3C3489" },
-  linkedin_task:  { icon: "\u27a1",        label: "LinkedIn taak",  bg: "#F1F5F9", fg: "#475569" },
+  campaign_mail:  { icon: "✉",        label: "Campagne-mail",  bg: "#E6F1FB", fg: "#0C447C" },
+  sequence_mail:  { icon: "➤",        label: "Sequence-mail",  bg: "#FAEEDA", fg: "#854F0B" },
+  linkedin_post:  { icon: "💬",  label: "LinkedIn post",  bg: "#EEEDFE", fg: "#3C3489" },
+  linkedin_task:  { icon: "➡",        label: "LinkedIn taak",  bg: "#F1F5F9", fg: "#475569" },
 };
 
 function CommunicationsPanel({ companyId }: { companyId: string }) {
@@ -470,7 +470,7 @@ function CommunicationsPanel({ companyId }: { companyId: string }) {
   });
 
   if (commsQ.isLoading) {
-    return <div className="rounded-lg ring-1 ring-slate-200 bg-white p-6 text-sm text-slate-500">Bezig met laden\u2026</div>;
+    return <div className="rounded-lg ring-1 ring-slate-200 bg-white p-6 text-sm text-slate-500">Bezig met laden…</div>;
   }
 
   const data = commsQ.data;
@@ -485,7 +485,7 @@ function CommunicationsPanel({ companyId }: { companyId: string }) {
         <SummaryCard label="Click events" value={String(data?.click_count ?? 0)} tone="emerald" />
         <SummaryCard
           label="Laatste contact"
-          value={data?.last_outbound_at ? new Date(data.last_outbound_at).toLocaleDateString("nl-NL") : "\u2014"}
+          value={data?.last_outbound_at ? new Date(data.last_outbound_at).toLocaleDateString("nl-NL") : "—"}
         />
       </div>
 
@@ -513,7 +513,7 @@ function CommunicationsPanel({ companyId }: { companyId: string }) {
 
       {entries.length === 0 && (
         <div className="rounded-lg ring-1 ring-slate-200 bg-white p-10 text-center text-sm text-slate-500">
-          <div className="text-3xl mb-2">\u270b</div>
+          <div className="text-3xl mb-2">✋</div>
           <div className="font-medium text-slate-700">Nog geen communicatie</div>
           <div className="mt-1">Mailings via HaloPSA + sequence-emails + LinkedIn-posts naar deze klant verschijnen hier.</div>
         </div>
@@ -544,7 +544,7 @@ function CommRow({ entry }: { entry: CommEntry }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2">
             <span className="text-[10px] uppercase tracking-wider text-slate-500">{meta.label}</span>
-            <span className="text-xs text-slate-400">\u00b7 {fmtDateTime(entry.sent_at)}</span>
+            <span className="text-xs text-slate-400">· {fmtDateTime(entry.sent_at)}</span>
             {entry.status && (
               <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
                 {entry.status}
@@ -561,10 +561,10 @@ function CommRow({ entry }: { entry: CommEntry }) {
             {entry.to_email && <span className="mr-3">naar {entry.to_name ? `${entry.to_name} <${entry.to_email}>` : entry.to_email}</span>}
             {isMail && (
               <span className="inline-flex items-center gap-2">
-                {entry.delivered_at && <span title={fmtDateTime(entry.delivered_at) || ""}>\u2709 bezorgd</span>}
-                {entry.opened_at && <span className="text-emerald-700" title={fmtDateTime(entry.opened_at) || ""}>\ud83d\udc41 geopend</span>}
-                {entry.clicked_at && <span className="text-emerald-700" title={fmtDateTime(entry.clicked_at) || ""}>\u270b geklikt</span>}
-                {entry.bounced_at && <span className="text-red-700" title={fmtDateTime(entry.bounced_at) || ""}>\u26a0 bounced</span>}
+                {entry.delivered_at && <span title={fmtDateTime(entry.delivered_at) || ""}>✉ bezorgd</span>}
+                {entry.opened_at && <span className="text-emerald-700" title={fmtDateTime(entry.opened_at) || ""}>👁 geopend</span>}
+                {entry.clicked_at && <span className="text-emerald-700" title={fmtDateTime(entry.clicked_at) || ""}>✋ geklikt</span>}
+                {entry.bounced_at && <span className="text-red-700" title={fmtDateTime(entry.bounced_at) || ""}>⚠ bounced</span>}
               </span>
             )}
           </div>
@@ -572,16 +572,16 @@ function CommRow({ entry }: { entry: CommEntry }) {
         <div className="shrink-0 flex flex-col items-end gap-1">
           {entry.external_url && (
             <a href={entry.external_url} target="_blank" rel="noreferrer"
-              className="text-xs text-brand-600 hover:underline">Open \u2197</a>
+              className="text-xs text-brand-600 hover:underline">Open ↗</a>
           )}
           {entry.campaign_id && (
             <Link to={`/mail-campaigns/${entry.campaign_id}`} className="text-xs text-brand-600 hover:underline">
-              Naar campagne \u2197
+              Naar campagne ↗
             </Link>
           )}
           {entry.post_id && (
             <Link to={`/social/${entry.post_id}`} className="text-xs text-brand-600 hover:underline">
-              Naar post \u2197
+              Naar post ↗
             </Link>
           )}
         </div>
