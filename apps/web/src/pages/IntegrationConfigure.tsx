@@ -80,6 +80,19 @@ const KINDS: Record<string, KindMeta> = {
       { name: "base_url", label: "Base URL (optioneel)", placeholder: "https://api.openai.com/v1", help: "Alleen wijzigen als je een Azure OpenAI of OpenAI-compatible proxy gebruikt." },
     ],
   },
+  snelstart: {
+    label: "SnelStart 12",
+    description: "Boekhouding (cloud). Vereist een Connect-app in SnelStart Developer Portal: developer.snelstart.nl. Daar krijg je subscription-key + client_id + client_secret.",
+    docsUrl: "https://developer.snelstart.nl/",
+    supportsSync: true,
+    fields: [
+      { name: "subscription_key", label: "Subscription key", type: "password", secret: true, required: true, help: "Ocp-Apim-Subscription-Key uit developer.snelstart.nl, je profiel → Subscriptions. Stored encrypted." },
+      { name: "client_id", label: "Client ID", required: true, help: "Uit je SnelStart Connect-app." },
+      { name: "client_secret", label: "Client secret", type: "password", secret: true, required: true, help: "Stored encrypted." },
+      { name: "administratie_id", label: "Administratie ID (optioneel)", help: "Laat leeg en kies hieronder uit de lijst nadat de test geslaagd is." },
+      { name: "base_url", label: "Base URL (optioneel)", placeholder: "https://b2bapi.snelstart.nl", help: "Alleen wijzigen voor sandbox/test." },
+    ],
+  },
   mailgun: {
     label: "Mailgun",
     description: "Outbound mail for sequences and inbound reply detection. Sending domain must be verified in Mailgun first (SPF/DKIM/DMARC).",

@@ -79,6 +79,7 @@ APOLLO_KIND = "apollo"
 M365_SSO_KIND = "m365_sso"
 PBX_3CX_KIND = "pbx_3cx"
 WESPENNEST_KIND = "wespennest"
+SNELSTART_KIND = "snelstart"
 
 
 def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -94,6 +95,15 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
         return {
             "base_url": cfg.get("base_url") or "api.prospectpro.nl",
             "api_key_set": bool(cfg.get("api_key")),
+        }
+    if kind == SNELSTART_KIND:
+        return {
+            "base_url": cfg.get("base_url") or "https://b2bapi.snelstart.nl",
+            "client_id": cfg.get("client_id"),
+            "administratie_id": cfg.get("administratie_id"),
+            "administratie_naam": cfg.get("administratie_naam"),
+            "subscription_key_set": bool(cfg.get("subscription_key")),
+            "client_secret_set": bool(cfg.get("client_secret")),
         }
     if kind == ANTHROPIC_KIND:
         return {
@@ -242,6 +252,7 @@ async def list_integrations(db: Db) -> list[IntegrationSummary]:
         (ANTHROPIC_KIND, "Anthropic (Claude)", "AI-classifier voor de overname-monitor en callscript-generatie. Vereist API key + losse credits."),
         (OPENAI_KIND, "OpenAI (GPT)", "AI-classifier en tekst-generatie via OpenAI. Wordt automatisch geprefereerd als beide AI-providers aan staan."),
         (MAILGUN_KIND, "Mailgun", "Outbound mail + inbound reply detection for sequences"),
+        (SNELSTART_KIND, "SnelStart 12", "Boekhouding -- verkoopfacturen, relaties, SEPA-machtigingen + maand-rapportage per groep"),
         (LINKEDIN_KIND, "LinkedIn", "Post scheduling + outreach task tracking"),
         # ---- Wespennest data sources ----
         (KVK_KIND, "KVK (officieel)", "Officiële KVK API — basisprofiel, vestigingen, functionarissen. Activatie 2-5 werkdagen, €6,40/mnd + €0,05/call."),
@@ -345,6 +356,7 @@ _make_kind_routes(M365_SSO_KIND)
 _make_kind_routes(PBX_3CX_KIND)
 _make_kind_routes(WESPENNEST_KIND)
 _make_kind_routes(OPENAI_KIND)
+_make_kind_routes(SNELSTART_KIND)
 
 
 # ---- HaloPSA test/sync ----
@@ -1090,3 +1102,91 @@ async def test_apollo(auth: CurrentAuth, db: Db) -> TestConnectionResult:
         token_present=True,
     )
 
+
+
+# ----------------------------------------------------------------------
+# SnelStart — test + sync wrappers
+# ----------------------------------------------------------------------
+
+from salespilot.integrations.snelstart import (
+    SnelStartClient, SnelStartCredentials, SnelStartError,
+)
+
+
+def _snelstart_creds(row: Integration) -> SnelStartCredentials:
+    cfg = row.config_json or {}
+    return SnelStartCredentials(
+        subscription_key=cfg.get("subscription_key") or "",
+        client_id=cfg.get("client_id") or "",
+        client_secret=cfg.get("client_secret") or "",
+        administratie_id=cfg.get("administratie_id"),
+        base_url=cfg.get("base_url") or "https://b2bapi.snelstart.nl",
+    )
+
+
+@router.post(f"/{SNELSTART_KIND}/test", response_model=TestConnectionResult)
+async def test_snelstart(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    row = await _get_integration(db, SNELSTART_KIND)
+    if row is None:
+        raise HTTPException(status_code=400, detail="SnelStart is nog niet ingesteld.")
+    cfg = row.config_json or {}
+    missing = [
+        k for k in ("subscription_key", "client_id", "client_secret")
+        if not cfg.get(k)
+    ]
+    if missing:
+        return TestConnectionResult(
+            ok=False,
+            detail=f"Configuratie incompleet: {', '.join(missing)} ontbreken.",
+        )
+    try:
+        async with SnelStartClient(_snelstart_creds(row)) as client:
+            result = await client.test_connection()
+        admin_count = result.get("administraties_count", 0)
+        msg = (
+            f"Verbinding OK. {admin_count} administratie(s) zichtbaar. "
+            f"Selecteer er een onder /settings/integrations/snelstart."
+            if admin_count
+            else
+            "Verbinding OK maar geen administraties zichtbaar voor deze app."
+        )
+        return TestConnectionResult(ok=True, detail=msg, token_present=True)
+    except SnelStartError as e:
+        msg = str(e)
+        # Nederlandse error-messages voor veelvoorkomende fouten
+        if "401" in msg:
+            msg = "Authenticatie mislukt -- controleer client_id + client_secret."
+        elif "403" in msg:
+            msg = "Subscription key ontbreekt of is onjuist (Ocp-Apim-Subscription-Key)."
+        elif "429" in msg:
+            msg = "Rate limit overschreden. Probeer over een minuut opnieuw."
+        return TestConnectionResult(ok=False, detail=msg)
+
+
+@router.post(f"/{SNELSTART_KIND}/sync", response_model=SyncResult)
+async def sync_snelstart(auth: CurrentAuth, db: Db) -> SyncResult:
+    """Lightweight sync: just verifies credentials still work and writes
+    last_sync metadata. The real data flow lives at /snelstart/dashboard
+    and /snelstart/sepa-fix endpoints which fetch on-demand."""
+    row = await _get_integration(db, SNELSTART_KIND)
+    if row is None or not row.is_enabled:
+        raise HTTPException(status_code=400, detail="SnelStart niet ingesteld of uitgeschakeld.")
+    try:
+        async with SnelStartClient(_snelstart_creds(row)) as client:
+            result = await client.test_connection()
+        row.last_sync_at = datetime.now(UTC)
+        row.last_sync_status = "ok"
+        row.last_sync_message = f"{result['administraties_count']} administratie(s)"
+        await db.flush()
+        return SyncResult(
+            ok=True,
+            detail=f"Verbonden met SnelStart. {result['administraties_count']} administratie(s).",
+            fetched=result["administraties_count"],
+            created=0, updated=0,
+        )
+    except SnelStartError as e:
+        row.last_sync_at = datetime.now(UTC)
+        row.last_sync_status = "error"
+        row.last_sync_message = str(e)[:500]
+        await db.flush()
+        return SyncResult(ok=False, detail=str(e))

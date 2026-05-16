@@ -207,9 +207,20 @@ class HaloPSAClient:
         return []
 
     async def get_mail_campaign(self, campaign_id: int) -> dict[str, Any] | None:
-        """Detail of one campaign (used for recipient lists / engagement)."""
+        """Detail of one campaign with full MailChimp report embedded.
+
+        Passing includedetails=true causes HaloPSA to embed the MailChimp
+        campaign payload (settings, recipients summary, report_summary
+        with opens/clicks/unique_opens/etc.) directly into the response.
+        Without this flag we only get HaloPSA's own slim view (id, name,
+        emails_sent, status).
+        """
         try:
-            data = await self._request("GET", f"/api/MailCampaign/{campaign_id}")
+            data = await self._request(
+                "GET",
+                f"/api/MailCampaign/{campaign_id}",
+                params={"includedetails": "true"},
+            )
         except HaloPSAError as e:
             if "403" in str(e) or "404" in str(e):
                 return None

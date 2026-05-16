@@ -254,16 +254,69 @@ async def sync_mail_campaigns_for_org(
             row.synced_at = now
             updated += 1
 
-        # Pull recipients. List endpoint may include recipients inline
-        # ('recipients' key) or require a detail-fetch.
+        # Pull recipients + MailChimp report summary.
+        # HaloPSA proxies MailChimp campaigns: ?includedetails=true returns
+        # a mailchimp_campaign sub-object with report_summary (opens,
+        # unique_opens, clicks, bounces, ...). We always do the detail
+        # fetch because the list endpoint omits this.
         recipients_raw: list[dict[str, Any]] = []
         if isinstance(raw.get("recipients"), list):
             recipients_raw = raw["recipients"]
-        else:
-            detail = await halopsa_client.get_mail_campaign(halopsa_id)
-            if isinstance(detail, dict):
-                if isinstance(detail.get("recipients"), list):
-                    recipients_raw = detail["recipients"]
+        detail = await halopsa_client.get_mail_campaign(halopsa_id)
+        if isinstance(detail, dict):
+            if not recipients_raw and isinstance(detail.get("recipients"), list):
+                recipients_raw = detail["recipients"]
+
+            # Two formats from HaloPSA depending on the campaign:
+            # (1) Newer in-app campaigns: stats live at the top level
+            #     (total_opens, total_clicks, total_unsubscribes,
+            #     unique_open_rate as %-float, click_rate as %-float,
+            #     recipients_count, emails_sent).
+            # (2) Legacy MailChimp-proxied campaigns: stats sit inside
+            #     mailchimp_campaign.report_summary (opens, unique_opens,
+            #     clicks, subscriber_clicks, bounces.hard/soft).
+            # We try the legacy path first because its data is richer
+            # (bounces breakdown), then fall back to top-level fields.
+
+            mc = detail.get("mailchimp_campaign")
+            opened = clicked = bounced = unsub = sent = delivered = 0
+            populated = False
+
+            if isinstance(mc, dict):
+                rs = mc.get("report_summary") or {}
+                if isinstance(rs, dict) and rs:
+                    opened = int(rs.get("unique_opens") or 0)
+                    clicked = int(rs.get("subscriber_clicks") or rs.get("clicks") or 0)
+                    bounces = mc.get("bounces") or {}
+                    if isinstance(bounces, dict):
+                        bounced = int(
+                            (bounces.get("hard_bounces") or 0)
+                            + (bounces.get("soft_bounces") or 0)
+                        )
+                    sent = int(mc.get("emails_sent") or 0)
+                    unsub = int(mc.get("unsubscribed") or 0)
+                    populated = True
+
+            if not populated:
+                # In-app HaloPSA campaign with top-level metrics.
+                if any(k in detail for k in ("total_opens", "total_clicks", "emails_sent")):
+                    opened = int(detail.get("total_opens") or 0)
+                    clicked = int(detail.get("total_clicks") or 0)
+                    unsub = int(detail.get("total_unsubscribes") or 0)
+                    sent = int(detail.get("emails_sent") or detail.get("recipients_count") or 0)
+                    populated = True
+
+            if populated:
+                row.opened_count = opened
+                row.clicked_count = clicked
+                row.bounced_count = bounced
+                row.unsubscribed_count = unsub
+                # Trust the detail's sent_count over the list's: HaloPSA
+                # sometimes reports recipients_count there but emails_sent
+                # is the real delivery number.
+                if sent > 0:
+                    row.sent_count = sent
+                    row.delivered_count = max(0, sent - bounced)
 
         # Upsert per (campaign_id, email).
         seen: set[str] = set()

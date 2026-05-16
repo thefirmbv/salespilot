@@ -118,6 +118,12 @@ const ICONS = {
       <path strokeWidth={1.2} strokeLinecap="round" d="M6.5 8c0 1.5 1 2.5 2.5 3M17.5 8c0 1.5-1 2.5-2.5 3" />
     </>
   ),
+  chart: (
+    <>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6}
+            d="M4 19V5M4 19h16M8 16V9M12 16v-4M16 16V7" />
+    </>
+  ),
   settings: (
     <path
       strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6}
@@ -222,7 +228,6 @@ export function AppLayout() {
       title: "Outreach",
       items: [
         { to: "/sequences", label: "Sequences", icon: "send" },
-        { to: "/linkedin", label: "LinkedIn (legacy)", icon: "linkedin" },
         { to: "/social", label: "LinkedIn posts", icon: "edit" },
         { to: "/mail-campaigns", label: "Mail Campaigns", icon: "megaphone" },
       ],
@@ -234,8 +239,10 @@ export function AppLayout() {
       ],
     },
     {
-      title: "External",
+      title: "Financieel",
       items: [
+        { to: "/financieel/dashboard", label: "Dashboard", icon: "chart" },
+        { to: "/financieel/sepa-fix",  label: "SEPA bulk-fix", icon: "shield" },
         { to: "/quotations", label: "Quotations", icon: "globe", badge: counts.quotations_open },
         { to: "/mandates", label: "SEPA-mandaten", icon: "shield" },
       ],

@@ -20,6 +20,8 @@ import { MailCampaignDetail } from "./pages/MailCampaignDetail";
 import { Wespennest } from "./pages/Wespennest";
 import { Management } from "./pages/Management";
 import { Mandates } from "./pages/Mandates";
+import { FinancieelDashboard } from "./pages/FinancieelDashboard";
+import { SepaFix } from "./pages/SepaFix";
 import { Calendar } from "./pages/Calendar";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { SocialPosts, SocialPostEditor } from "./pages/SocialPosts";
@@ -70,6 +72,8 @@ createRoot(root).render(
               <Route path="/toegekend" element={<Wespennest />} />
               <Route path="/management" element={<Management />} />
               <Route path="/mandates" element={<Mandates />} />
+              <Route path="/financieel/dashboard" element={<FinancieelDashboard />} />
+              <Route path="/financieel/sepa-fix" element={<SepaFix />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/social" element={<SocialPosts />} />
               <Route path="/social/new" element={<SocialPostEditor />} />
