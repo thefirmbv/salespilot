@@ -81,6 +81,8 @@ PBX_3CX_KIND = "pbx_3cx"
 WESPENNEST_KIND = "wespennest"
 SNELSTART_KIND = "snelstart"
 UNIFI_KIND = "unifi"
+PLESK_KIND = "plesk"
+OPENPROVIDER_KIND = "openprovider"
 
 
 def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -113,6 +115,25 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
             "api_key_set": bool(cfg.get("api_key")),
             "halopsa_product_id": cfg.get("halopsa_product_id"),
             "asset_type": cfg.get("asset_type") or "UniFi Devices",
+        }
+    if kind == PLESK_KIND:
+        return {
+            "base_url": cfg.get("base_url") or "https://localhost:8443",
+            "poll_interval_seconds": cfg.get("poll_interval_seconds") or 300,
+            "api_key_set": bool(cfg.get("api_key")),
+            "verify_tls": cfg.get("verify_tls", True),
+            "halopsa_product_id": cfg.get("halopsa_product_id"),
+            "asset_type": cfg.get("asset_type") or "Plesk Hosting",
+        }
+    if kind == OPENPROVIDER_KIND:
+        return {
+            "base_url": cfg.get("base_url") or "https://api.openprovider.eu",
+            "poll_interval_seconds": cfg.get("poll_interval_seconds") or 3600,
+            "username": cfg.get("username"),
+            "password_set": bool(cfg.get("password")),
+            "bound_ip": cfg.get("bound_ip"),
+            "halopsa_product_id": cfg.get("halopsa_product_id"),
+            "asset_type": cfg.get("asset_type") or "Domain Registration",
         }
     if kind == ANTHROPIC_KIND:
         return {
@@ -263,6 +284,8 @@ async def list_integrations(db: Db) -> list[IntegrationSummary]:
         (MAILGUN_KIND, "Mailgun", "Outbound mail + inbound reply detection for sequences"),
         (SNELSTART_KIND, "SnelStart 12", "Boekhouding -- verkoopfacturen, relaties, SEPA-machtigingen + maand-rapportage per groep"),
         (UNIFI_KIND, "UniFi Site Manager", "Monitoring van alle Dream Machines + devices via api.ui.com. Asset-sync naar HaloPSA + device-count voor recurring facturen."),
+        (PLESK_KIND, "Plesk Hosting", "Hosting-subscriptions van Plesk server. Asset-sync naar HaloPSA (1 sub = 1 asset = recurring factuurregel)."),
+        (OPENPROVIDER_KIND, "Openprovider", "Domeinregistraties. Asset-sync naar HaloPSA + vervaldatum-monitoring."),
         (LINKEDIN_KIND, "LinkedIn", "Post scheduling + outreach task tracking"),
         # ---- Wespennest data sources ----
         (KVK_KIND, "KVK (officieel)", "Officiële KVK API — basisprofiel, vestigingen, functionarissen. Activatie 2-5 werkdagen, €6,40/mnd + €0,05/call."),
@@ -368,6 +391,8 @@ _make_kind_routes(WESPENNEST_KIND)
 _make_kind_routes(OPENAI_KIND)
 _make_kind_routes(SNELSTART_KIND)
 _make_kind_routes(UNIFI_KIND)
+_make_kind_routes(PLESK_KIND)
+_make_kind_routes(OPENPROVIDER_KIND)
 
 
 # ---- HaloPSA test/sync ----
@@ -1268,6 +1293,150 @@ async def sync_unifi(auth: CurrentAuth, db: Db) -> SyncResult:
             updated=counters["devices_seen"] - counters["devices_new"],
         )
     except UniFiError as e:
+        row.last_sync_at = datetime.now(UTC)
+        row.last_sync_status = "error"
+        row.last_sync_message = str(e)[:500]
+        await db.flush()
+        return SyncResult(ok=False, detail=str(e))
+
+
+# ----------------------------------------------------------------------
+# Plesk -- test + sync
+# ----------------------------------------------------------------------
+
+from salespilot.integrations.plesk import (
+    PleskClient, PleskCredentials, PleskError,
+)
+from salespilot.integrations.plesk_poller import poll_plesk_for_org
+
+
+def _plesk_creds(row: Integration) -> PleskCredentials:
+    cfg = row.config_json or {}
+    return PleskCredentials(
+        api_key=cfg.get("api_key", ""),
+        base_url=cfg.get("base_url") or "https://localhost:8443",
+        verify_tls=bool(cfg.get("verify_tls", True)),
+    )
+
+
+@router.post(f"/{PLESK_KIND}/test", response_model=TestConnectionResult)
+async def test_plesk(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    row = await _get_integration(db, PLESK_KIND)
+    if row is None or not (row.config_json or {}).get("api_key"):
+        return TestConnectionResult(
+            ok=False, detail="API key ontbreekt -- vul eerst de configuratie in.",
+        )
+    try:
+        async with PleskClient(_plesk_creds(row)) as c:
+            r = await c.test_connection()
+        return TestConnectionResult(
+            ok=True,
+            detail=(
+                f"Verbinding OK. Plesk {r['version']} op {r['hostname']}. "
+                f"{r['clients_count']} klanten, {r['subscriptions_count']} subscriptions."
+            ),
+            token_present=True,
+        )
+    except PleskError as e:
+        return TestConnectionResult(ok=False, detail=str(e))
+
+
+@router.post(f"/{PLESK_KIND}/sync", response_model=SyncResult)
+async def sync_plesk(auth: CurrentAuth, db: Db) -> SyncResult:
+    row = await _get_integration(db, PLESK_KIND)
+    if row is None or not row.is_enabled or not (row.config_json or {}).get("api_key"):
+        raise HTTPException(status_code=400, detail="Plesk niet ingesteld/ingeschakeld.")
+    try:
+        async with PleskClient(_plesk_creds(row)) as c:
+            counters = await poll_plesk_for_org(db, org_id=auth.org_id, client=c)
+        row.last_sync_at = datetime.now(UTC)
+        row.last_sync_status = "ok"
+        row.last_sync_message = (
+            f"{counters['subscriptions_seen']} subscriptions, "
+            f"{counters['domains_seen']} domains, "
+            f"{counters['state_events']} state-changes."
+        )
+        await db.flush()
+        return SyncResult(
+            ok=True, detail=row.last_sync_message,
+            fetched=counters["subscriptions_seen"] + counters["domains_seen"],
+            created=counters["subscriptions_new"] + counters["domains_new"],
+            updated=counters["subscriptions_seen"] - counters["subscriptions_new"],
+        )
+    except PleskError as e:
+        row.last_sync_at = datetime.now(UTC)
+        row.last_sync_status = "error"
+        row.last_sync_message = str(e)[:500]
+        await db.flush()
+        return SyncResult(ok=False, detail=str(e))
+
+
+# ----------------------------------------------------------------------
+# Openprovider -- test + sync
+# ----------------------------------------------------------------------
+
+from salespilot.integrations.openprovider import (
+    OpenproviderClient, OpenproviderCredentials, OpenproviderError,
+)
+from salespilot.integrations.openprovider_poller import poll_openprovider_for_org
+
+
+def _op_creds(row: Integration) -> OpenproviderCredentials:
+    cfg = row.config_json or {}
+    return OpenproviderCredentials(
+        username=cfg.get("username", ""),
+        password=cfg.get("password", ""),
+        base_url=cfg.get("base_url") or "https://api.openprovider.eu",
+        bound_ip=cfg.get("bound_ip"),
+    )
+
+
+@router.post(f"/{OPENPROVIDER_KIND}/test", response_model=TestConnectionResult)
+async def test_openprovider(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    row = await _get_integration(db, OPENPROVIDER_KIND)
+    if row is None:
+        return TestConnectionResult(ok=False, detail="Niet ingesteld")
+    cfg = row.config_json or {}
+    if not cfg.get("username") or not cfg.get("password"):
+        return TestConnectionResult(
+            ok=False, detail="Username + password ontbreken in configuratie.",
+        )
+    try:
+        async with OpenproviderClient(_op_creds(row)) as c:
+            r = await c.test_connection()
+        return TestConnectionResult(
+            ok=True,
+            detail=f"Verbinding OK. {r['total_domains']} domeinen zichtbaar onder dit account.",
+            token_present=True,
+        )
+    except OpenproviderError as e:
+        return TestConnectionResult(ok=False, detail=str(e))
+
+
+@router.post(f"/{OPENPROVIDER_KIND}/sync", response_model=SyncResult)
+async def sync_openprovider(auth: CurrentAuth, db: Db) -> SyncResult:
+    row = await _get_integration(db, OPENPROVIDER_KIND)
+    if row is None or not row.is_enabled:
+        raise HTTPException(status_code=400, detail="Openprovider niet ingesteld/ingeschakeld.")
+    cfg = row.config_json or {}
+    if not cfg.get("username") or not cfg.get("password"):
+        raise HTTPException(status_code=400, detail="Credentials ontbreken.")
+    try:
+        async with OpenproviderClient(_op_creds(row)) as c:
+            counters = await poll_openprovider_for_org(db, org_id=auth.org_id, client=c)
+        row.last_sync_at = datetime.now(UTC)
+        row.last_sync_status = "ok"
+        row.last_sync_message = (
+            f"{counters['domains_seen']} domains ({counters['domains_new']} nieuw)"
+        )
+        await db.flush()
+        return SyncResult(
+            ok=True, detail=row.last_sync_message,
+            fetched=counters["domains_seen"],
+            created=counters["domains_new"],
+            updated=counters["domains_seen"] - counters["domains_new"],
+        )
+    except OpenproviderError as e:
         row.last_sync_at = datetime.now(UTC)
         row.last_sync_status = "error"
         row.last_sync_message = str(e)[:500]

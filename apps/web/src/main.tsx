@@ -27,6 +27,8 @@ import { UnifiHostDetail } from "./pages/UnifiHostDetail";
 import { QuotationDetail } from "./pages/QuotationDetail";
 import { AccessSettings } from "./pages/AccessSettings";
 import { Tech } from "./pages/Tech";
+import { Plesk } from "./pages/Plesk";
+import { Openprovider } from "./pages/Openprovider";
 import { Calendar } from "./pages/Calendar";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { SocialPosts, SocialPostEditor } from "./pages/SocialPosts";
@@ -84,6 +86,8 @@ createRoot(root).render(
               <Route path="/quotations/:quotationId" element={<QuotationDetail />} />
               <Route path="/settings/access" element={<AccessSettings />} />
               <Route path="/tech" element={<Tech />} />
+              <Route path="/plesk" element={<Plesk />} />
+              <Route path="/openprovider" element={<Openprovider />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/social" element={<SocialPosts />} />
               <Route path="/social/new" element={<SocialPostEditor />} />

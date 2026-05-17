@@ -243,6 +243,8 @@ export function AppLayout() {
       title: "Monitoring",
       items: [
         { to: "/unifi", label: "UniFi", icon: "wifi" },
+        { to: "/plesk", label: "Plesk", icon: "globe" },
+        { to: "/openprovider", label: "Openprovider", icon: "globe" },
       ],
     },
     {
