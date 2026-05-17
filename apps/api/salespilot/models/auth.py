@@ -9,7 +9,8 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from salespilot.models import Base, Timestamps, UUIDPrimaryKey
@@ -75,6 +76,13 @@ class OrgMembership(UUIDPrimaryKey, Timestamps, Base):
     )
     role: Mapped[OrgRole] = mapped_column(
         Enum(OrgRole, name="org_role", values_callable=lambda e: [x.value for x in e]), default=OrgRole.MEMBER, nullable=False
+    )
+    # Multi-group membership: TEXT[] of group names from
+    # salespilot.access.Group. See migration 0016 for the seed rule
+    # (everyone starts as administrators). Indexable with GIN for fast
+    # `groups @> ARRAY['admin']` queries.
+    groups: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY[]::text[]"),
     )
 
     user: Mapped[User] = relationship(back_populates="memberships")

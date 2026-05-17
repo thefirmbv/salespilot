@@ -25,6 +25,8 @@ import { SepaFix } from "./pages/SepaFix";
 import { Unifi } from "./pages/Unifi";
 import { UnifiHostDetail } from "./pages/UnifiHostDetail";
 import { QuotationDetail } from "./pages/QuotationDetail";
+import { AccessSettings } from "./pages/AccessSettings";
+import { Tech } from "./pages/Tech";
 import { Calendar } from "./pages/Calendar";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { SocialPosts, SocialPostEditor } from "./pages/SocialPosts";
@@ -80,6 +82,8 @@ createRoot(root).render(
               <Route path="/unifi" element={<Unifi />} />
               <Route path="/unifi/hosts/:hostId" element={<UnifiHostDetail />} />
               <Route path="/quotations/:quotationId" element={<QuotationDetail />} />
+              <Route path="/settings/access" element={<AccessSettings />} />
+              <Route path="/tech" element={<Tech />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/social" element={<SocialPosts />} />
               <Route path="/social/new" element={<SocialPostEditor />} />

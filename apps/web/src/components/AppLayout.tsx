@@ -15,6 +15,10 @@ type NavEntry = {
 type NavSection = {
   title: string | null;
   items: NavEntry[];
+  // section id from backend /access/sections; used to hide the whole
+  // group for users without permission. Optional so legacy entries
+  // (no access control) stay visible.
+  sectionId?: string;
 };
 
 function useCounts() {
@@ -186,8 +190,17 @@ function Badge({
   );
 }
 
+type AccessMe = { is_admin: boolean; visible_sections: string[] };
+
 export function AppLayout() {
   const { me, logout } = useAuth();
+  const accessQ = useQuery<AccessMe>({
+    queryKey: ["/access/me"],
+    queryFn: () => api<AccessMe>("/access/me"),
+    staleTime: 60_000,
+  });
+  const visibleSet = new Set(accessQ.data?.visible_sections || []);
+  const isAdmin = accessQ.data?.is_admin ?? false;
   const navigate = useNavigate();
   const location = useLocation();
   const counts = useCounts();
@@ -210,10 +223,12 @@ export function AppLayout() {
 
   const sections: NavSection[] = [
     {
+      sectionId: "core",
       title: "Overview",
       items: [{ to: "/dashboard", label: "Dashboard", icon: "dashboard" }],
     },
     {
+      sectionId: "acquisitie",
       title: "Pipeline",
       items: [
         { to: "/prospects", label: "Prospects", icon: "target", badge: counts.prospects, badgeTone: "brand" },
@@ -224,12 +239,21 @@ export function AppLayout() {
       ],
     },
     {
+      sectionId: "monitoring",
       title: "Monitoring",
       items: [
         { to: "/unifi", label: "UniFi", icon: "wifi" },
       ],
     },
     {
+      sectionId: "tech",
+      title: "Tech",
+      items: [
+        { to: "/tech", label: "Koppelingen", icon: "settings" },
+      ],
+    },
+    {
+      sectionId: "acquisitie",
       title: "Acquisitie",
       items: [
         { to: "/wespennest", label: "Wespennest", icon: "wasp" },
@@ -237,6 +261,7 @@ export function AppLayout() {
       ],
     },
     {
+      sectionId: "acquisitie",
       title: "Outreach",
       items: [
         { to: "/sequences", label: "Sequences", icon: "send" },
@@ -245,12 +270,14 @@ export function AppLayout() {
       ],
     },
     {
+      sectionId: "agenda",
       title: "Persoonlijk",
       items: [
         { to: "/calendar", label: "Mijn agenda", icon: "edit" },
       ],
     },
     {
+      sectionId: "financieel",
       title: "Financieel",
       items: [
         { to: "/financieel/dashboard", label: "Dashboard", icon: "chart" },
@@ -260,6 +287,15 @@ export function AppLayout() {
       ],
     },
   ];
+
+  // Filter sidebar based on /access/me. Admins see everything; others
+  // only see sections whose id is in visible_sections from the server.
+  // Sections without a sectionId (legacy) stay visible to everyone.
+  const visibleSections = sections.filter((s) => {
+    if (isAdmin) return true;
+    if (!s.sectionId) return true;
+    return visibleSet.has(s.sectionId);
+  });
 
   return (
     <>
@@ -329,7 +365,7 @@ export function AppLayout() {
         </div>
 
         <nav className="px-2 flex-1 overflow-auto">
-          {sections.map((section) => (
+          {visibleSections.map((section) => (
             <div key={section.title ?? "_"} className="mb-3">
               {section.title && (
                 <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-slate-400">

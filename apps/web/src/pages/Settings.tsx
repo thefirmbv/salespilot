@@ -44,6 +44,14 @@ export function Settings() {
           >
             Branding
           </NavLink>
+          <NavLink
+            to="access"
+            className={({ isActive }) =>
+              `${tab} ${isActive ? tabActive : tabIdle}`
+            }
+          >
+            Rechten
+          </NavLink>
           {canManage && (
             <NavLink
               to="management"

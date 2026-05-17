@@ -35,9 +35,16 @@ def _extract_bearer(authorization: str | None) -> str:
 class AuthContext:
     """Decoded JWT context attached to the request."""
 
-    def __init__(self, user_id: UUID, org_id: UUID | None) -> None:
+    def __init__(
+        self,
+        user_id: UUID,
+        org_id: UUID | None,
+        groups: list[str] | None = None,
+    ) -> None:
         self.user_id = user_id
         self.org_id = org_id
+        # Lazy: not set until get_auth_context fetches from DB.
+        self.groups: list[str] = groups or []
 
 
 async def get_auth_context(
@@ -52,7 +59,23 @@ async def get_auth_context(
         ) from e
     user_id = UUID(payload["sub"])
     org_id = UUID(payload["org"]) if payload.get("org") else None
-    return AuthContext(user_id=user_id, org_id=org_id)
+    # Pull the user's groups for this org from the membership row.
+    # We use raw_session() (no RLS) so we can read across orgs if the
+    # user has multiple memberships -- but we filter to org_id.
+    groups: list[str] = []
+    if org_id is not None:
+        from sqlalchemy import select
+        from salespilot.models.auth import OrgMembership
+        async with raw_session() as s:
+            m = (await s.execute(
+                select(OrgMembership).where(
+                    OrgMembership.user_id == user_id,
+                    OrgMembership.org_id == org_id,
+                )
+            )).scalar_one_or_none()
+            if m is not None:
+                groups = list(m.groups or [])
+    return AuthContext(user_id=user_id, org_id=org_id, groups=groups)
 
 
 CurrentAuth = Annotated[AuthContext, Depends(get_auth_context)]
