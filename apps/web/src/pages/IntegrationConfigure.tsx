@@ -93,6 +93,19 @@ const KINDS: Record<string, KindMeta> = {
       { name: "base_url", label: "Base URL (optioneel)", placeholder: "https://b2bapi.snelstart.nl", help: "Alleen wijzigen voor sandbox/test." },
     ],
   },
+  unifi: {
+    label: "UniFi Site Manager",
+    description: "Monitoring van alle Dream Machines + devices via api.ui.com. Genereer een API key op unifi.ui.com profiel -> API.",
+    docsUrl: "https://developer.ui.com/",
+    supportsSync: true,
+    fields: [
+      { name: "api_key", label: "API key", type: "password", secret: true, required: true, help: "X-API-KEY van unifi.ui.com -> profiel -> API. Stored encrypted." },
+      { name: "poll_interval_seconds", label: "Poll-interval (seconden)", placeholder: "120", help: "Default 120 (= elke 2 min). Minimum 60s. Verhoog naar 300 als je dicht bij de rate-limit zit." },
+      { name: "asset_type", label: "HaloPSA asset-type naam", placeholder: "UniFi Devices", help: "Onder welke asset-type alle devices in HaloPSA komen te staan." },
+      { name: "halopsa_product_id", label: "HaloPSA product ID (factureren)", help: "Het recurring-product ID dat per device gefactureerd wordt. Aantal = total device-count per klant." },
+      { name: "base_url", label: "Base URL (optioneel)", placeholder: "https://api.ui.com", help: "Alleen wijzigen als Ubiquiti een andere endpoint introduceert." },
+    ],
+  },
   mailgun: {
     label: "Mailgun",
     description: "Outbound mail for sequences and inbound reply detection. Sending domain must be verified in Mailgun first (SPF/DKIM/DMARC).",

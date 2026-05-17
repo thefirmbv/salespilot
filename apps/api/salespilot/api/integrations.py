@@ -80,6 +80,7 @@ M365_SSO_KIND = "m365_sso"
 PBX_3CX_KIND = "pbx_3cx"
 WESPENNEST_KIND = "wespennest"
 SNELSTART_KIND = "snelstart"
+UNIFI_KIND = "unifi"
 
 
 def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -104,6 +105,14 @@ def _public_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
             "administratie_naam": cfg.get("administratie_naam"),
             "subscription_key_set": bool(cfg.get("subscription_key")),
             "client_secret_set": bool(cfg.get("client_secret")),
+        }
+    if kind == UNIFI_KIND:
+        return {
+            "base_url": cfg.get("base_url") or "https://api.ui.com",
+            "poll_interval_seconds": cfg.get("poll_interval_seconds") or 120,
+            "api_key_set": bool(cfg.get("api_key")),
+            "halopsa_product_id": cfg.get("halopsa_product_id"),
+            "asset_type": cfg.get("asset_type") or "UniFi Devices",
         }
     if kind == ANTHROPIC_KIND:
         return {
@@ -253,6 +262,7 @@ async def list_integrations(db: Db) -> list[IntegrationSummary]:
         (OPENAI_KIND, "OpenAI (GPT)", "AI-classifier en tekst-generatie via OpenAI. Wordt automatisch geprefereerd als beide AI-providers aan staan."),
         (MAILGUN_KIND, "Mailgun", "Outbound mail + inbound reply detection for sequences"),
         (SNELSTART_KIND, "SnelStart 12", "Boekhouding -- verkoopfacturen, relaties, SEPA-machtigingen + maand-rapportage per groep"),
+        (UNIFI_KIND, "UniFi Site Manager", "Monitoring van alle Dream Machines + devices via api.ui.com. Asset-sync naar HaloPSA + device-count voor recurring facturen."),
         (LINKEDIN_KIND, "LinkedIn", "Post scheduling + outreach task tracking"),
         # ---- Wespennest data sources ----
         (KVK_KIND, "KVK (officieel)", "Officiële KVK API — basisprofiel, vestigingen, functionarissen. Activatie 2-5 werkdagen, €6,40/mnd + €0,05/call."),
@@ -357,6 +367,7 @@ _make_kind_routes(PBX_3CX_KIND)
 _make_kind_routes(WESPENNEST_KIND)
 _make_kind_routes(OPENAI_KIND)
 _make_kind_routes(SNELSTART_KIND)
+_make_kind_routes(UNIFI_KIND)
 
 
 # ---- HaloPSA test/sync ----
@@ -1185,6 +1196,78 @@ async def sync_snelstart(auth: CurrentAuth, db: Db) -> SyncResult:
             created=0, updated=0,
         )
     except SnelStartError as e:
+        row.last_sync_at = datetime.now(UTC)
+        row.last_sync_status = "error"
+        row.last_sync_message = str(e)[:500]
+        await db.flush()
+        return SyncResult(ok=False, detail=str(e))
+
+
+# ----------------------------------------------------------------------
+# UniFi -- test + manual sync trigger
+# ----------------------------------------------------------------------
+
+from salespilot.integrations.unifi import (
+    UniFiClient, UniFiCredentials, UniFiError,
+)
+from salespilot.integrations.unifi_poller import poll_unifi_for_org
+
+
+def _unifi_creds(row: Integration) -> UniFiCredentials:
+    cfg = row.config_json or {}
+    return UniFiCredentials(
+        api_key=cfg.get("api_key") or "",
+        base_url=cfg.get("base_url") or "https://api.ui.com",
+    )
+
+
+@router.post(f"/{UNIFI_KIND}/test", response_model=TestConnectionResult)
+async def test_unifi(auth: CurrentAuth, db: Db) -> TestConnectionResult:
+    row = await _get_integration(db, UNIFI_KIND)
+    if row is None or not (row.config_json or {}).get("api_key"):
+        return TestConnectionResult(
+            ok=False, detail="API key ontbreekt -- vul eerst de configuratie in.",
+        )
+    try:
+        async with UniFiClient(_unifi_creds(row)) as client:
+            result = await client.test_connection()
+        msg = (
+            f"Verbinding OK. "
+            f"{result['hosts']} hosts, {result['sites']} sites, "
+            f"{result['devices']} devices "
+            f"({result['devices_online']} online / {result['devices_offline']} offline)."
+        )
+        return TestConnectionResult(ok=True, detail=msg, token_present=True)
+    except UniFiError as e:
+        return TestConnectionResult(ok=False, detail=str(e))
+
+
+@router.post(f"/{UNIFI_KIND}/sync", response_model=SyncResult)
+async def sync_unifi(auth: CurrentAuth, db: Db) -> SyncResult:
+    """Pull current state from api.ui.com into postgres. Run by cron at
+    poll_interval_seconds; also exposable for ad-hoc refresh from the UI.
+    """
+    row = await _get_integration(db, UNIFI_KIND)
+    if row is None or not row.is_enabled or not (row.config_json or {}).get("api_key"):
+        raise HTTPException(status_code=400, detail="UniFi niet ingesteld/ingeschakeld.")
+    try:
+        async with UniFiClient(_unifi_creds(row)) as client:
+            counters = await poll_unifi_for_org(db, org_id=auth.org_id, client=client)
+        row.last_sync_at = datetime.now(UTC)
+        row.last_sync_status = "ok"
+        row.last_sync_message = (
+            f"{counters['hosts_seen']} hosts, {counters['devices_seen']} devices, "
+            f"{counters['state_events']} state-changes."
+        )
+        await db.flush()
+        return SyncResult(
+            ok=True,
+            detail=row.last_sync_message,
+            fetched=counters["hosts_seen"] + counters["devices_seen"],
+            created=counters["hosts_new"] + counters["devices_new"],
+            updated=counters["devices_seen"] - counters["devices_new"],
+        )
+    except UniFiError as e:
         row.last_sync_at = datetime.now(UTC)
         row.last_sync_status = "error"
         row.last_sync_message = str(e)[:500]

@@ -118,6 +118,12 @@ const ICONS = {
       <path strokeWidth={1.2} strokeLinecap="round" d="M6.5 8c0 1.5 1 2.5 2.5 3M17.5 8c0 1.5-1 2.5-2.5 3" />
     </>
   ),
+  wifi: (
+    <>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6}
+            d="M5 12.55a11 11 0 0114 0M8.5 16.05a6 6 0 017 0M2 8.82a15 15 0 0120 0M12 20h.01" />
+    </>
+  ),
   chart: (
     <>
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6}
@@ -215,6 +221,12 @@ export function AppLayout() {
         { to: "/deals", label: "Deals", icon: "coin" },
         { to: "/contacts", label: "Contacts", icon: "users" },
         { to: "/activities", label: "Activities", icon: "checklist", badge: counts.activities, badgeTone: "danger" },
+      ],
+    },
+    {
+      title: "Monitoring",
+      items: [
+        { to: "/unifi", label: "UniFi", icon: "wifi" },
       ],
     },
     {

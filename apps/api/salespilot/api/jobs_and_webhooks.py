@@ -865,3 +865,73 @@ async def social_metrics_refresh(
         "skipped": skipped,
     }
 
+
+
+@internal_router.post("/unifi/tick")
+async def unifi_tick(
+    x_internal_token: str = Header(default=""),
+) -> dict[str, Any]:
+    """Poll UniFi Site Manager for every org with the integration enabled.
+
+    Schedule (cron-side): every 2 minutes by default. Each org's
+    integration row has a poll_interval_seconds field; we honor it by
+    skipping orgs whose last_sync_at is more recent than that.
+    """
+    settings = get_settings()
+    expected = settings.autopilot_internal_token.get_secret_value()
+    if not expected or x_internal_token != expected:
+        raise HTTPException(status_code=401, detail="bad internal token")
+
+    from salespilot.integrations.unifi import UniFiClient, UniFiCredentials, UniFiError
+    from salespilot.integrations.unifi_poller import poll_unifi_for_org
+
+    polled_at = datetime.now(UTC)
+    results: list[dict[str, Any]] = []
+
+    async with get_sessionmaker()() as db:
+        orgs = (await db.execute(select(Organization))).scalars().all()
+
+    for org in orgs:
+        async with get_sessionmaker()() as db:
+            await _set_org_context(db, org.id)
+            row = (
+                await db.execute(
+                    select(Integration).where(
+                        Integration.org_id == org.id,
+                        Integration.kind == "unifi",
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None or not row.is_enabled:
+                continue
+            cfg = row.config_json or {}
+            api_key = cfg.get("api_key")
+            if not api_key:
+                continue
+            # Honor per-org poll interval
+            interval = int(cfg.get("poll_interval_seconds") or 120)
+            if row.last_sync_at and (polled_at - row.last_sync_at).total_seconds() < interval - 5:
+                continue
+            try:
+                creds = UniFiCredentials(
+                    api_key=api_key,
+                    base_url=cfg.get("base_url") or "https://api.ui.com",
+                )
+                async with UniFiClient(creds) as client:
+                    counters = await poll_unifi_for_org(db, org_id=org.id, client=client)
+                row.last_sync_at = polled_at
+                row.last_sync_status = "ok"
+                row.last_sync_message = (
+                    f"{counters['hosts_seen']} hosts, "
+                    f"{counters['devices_seen']} devices, "
+                    f"{counters['state_events']} state-changes"
+                )
+                results.append({"org": str(org.id), "ok": True, **counters})
+            except UniFiError as e:
+                row.last_sync_status = "error"
+                row.last_sync_message = str(e)[:500]
+                row.last_sync_at = polled_at
+                results.append({"org": str(org.id), "ok": False, "error": str(e)[:200]})
+            await db.commit()
+
+    return {"ok": True, "polled": len(results), "results": results}
