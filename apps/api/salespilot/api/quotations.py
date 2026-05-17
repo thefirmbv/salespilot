@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -239,4 +240,132 @@ async def sync_quotations(auth: CurrentAuth, db: Db) -> QuotationSyncResult:
         updated=counters["updated"],
         deals_created=counters["deals_created"],
         reminders_scheduled=counters["reminders_scheduled"],
+    )
+
+
+# ----------------------------------------------------------------------
+# Quotation lines (live from HaloPSA, not cached)
+# ----------------------------------------------------------------------
+
+
+class QuotationLine(BaseModel):
+    """One line item from HaloPSA's quotation.lines array."""
+    id: int | None = None
+    sort_seq: int | None = None
+    productcode: str | None = None
+    name: str = ""
+    description: str = ""
+    quantity: float = 0.0
+    price: float = 0.0
+    discount_perc: float = 0.0
+    total_price: float = 0.0
+    total_cost: float = 0.0
+    billingperiod: int | None = None
+    tax_rate: float | None = None
+
+
+class QuotationDetail(BaseModel):
+    quotation_id: UUID
+    halopsa_id: int
+    subject: str
+    status: str
+    status_label_halopsa: str | None
+    amount_net: float | None
+    amount_gross: float | None
+    valid_until: datetime | None
+    sent_at: datetime | None
+    company_name: str | None = None
+    halopsa_url: str | None = None
+    lines: list[QuotationLine]
+
+
+@router.get("/{quotation_id}/lines", response_model=QuotationDetail)
+async def get_quotation_lines(
+    quotation_id: UUID, auth: CurrentAuth, db: Db,
+) -> QuotationDetail:
+    """Live fetch of one quotation incl. line items from HaloPSA.
+
+    We don't cache lines in our DB on purpose: they can change in
+    HaloPSA after the salesperson edits, and we want the detail view
+    to always show what HaloPSA shows. The header (subject/status/
+    amount) IS cached so the listing page stays snappy.
+    """
+    from salespilot.models.quotation import Quotation as QuotationModel
+    from salespilot.models.crm import Company as CompanyModel
+    from salespilot.models.integrations import Integration
+    from salespilot.integrations.halopsa import HaloPSAClient, HaloPSACredentials, HaloPSAError
+
+    row = (
+        await db.execute(
+            select(QuotationModel).where(QuotationModel.id == quotation_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Offerte niet gevonden")
+
+    company = (
+        await db.execute(
+            select(CompanyModel).where(CompanyModel.id == row.company_id)
+        )
+    ).scalar_one_or_none()
+
+    halopsa = (
+        await db.execute(select(Integration).where(Integration.kind == "halopsa"))
+    ).scalar_one_or_none()
+    if halopsa is None or not halopsa.is_enabled:
+        raise HTTPException(status_code=400, detail="HaloPSA niet ingesteld.")
+    cfg = halopsa.config_json or {}
+    creds = HaloPSACredentials(
+        base_url=cfg.get("base_url", ""),
+        client_id=cfg.get("client_id", ""),
+        client_secret=cfg.get("client_secret", ""),
+        tenant_id=cfg.get("tenant_id"),
+        scopes=cfg.get("scopes") or "all",
+    )
+
+    try:
+        async with HaloPSAClient(creds) as c:
+            detail = await c.get_quotation_with_lines(row.halopsa_id)
+    except HaloPSAError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    if not detail:
+        raise HTTPException(status_code=404, detail="HaloPSA gaf geen detail terug.")
+
+    raw_lines = detail.get("lines") or []
+    lines: list[QuotationLine] = []
+    for ln in raw_lines:
+        lines.append(QuotationLine(
+            id=ln.get("id"),
+            sort_seq=ln.get("sort_seq"),
+            productcode=ln.get("productcode") or None,
+            name=ln.get("name") or "",
+            description=ln.get("description") or "",
+            quantity=float(ln.get("quantity") or 0),
+            price=float(ln.get("price") or 0),
+            discount_perc=float(ln.get("discount_perc") or 0),
+            total_price=float(ln.get("total") or ln.get("total_price") or ln.get("current_net_price") or 0),
+            total_cost=float(ln.get("total_costprice") or ln.get("cost_converted") or 0),
+            billingperiod=ln.get("billingperiod"),
+            tax_rate=float(ln.get("tax_rate") or 0) if ln.get("tax_rate") is not None else None,
+        ))
+
+    halopsa_url = None
+    base = (cfg.get("base_url") or "").rstrip("/")
+    if base:
+        halopsa_url = f"{base}/quotation/?id={row.halopsa_id}"
+
+    return QuotationDetail(
+        quotation_id=row.id,
+        halopsa_id=row.halopsa_id,
+        subject=row.subject or "",
+        status=row.status,
+        status_label_halopsa=row.status_label_halopsa,
+        amount_net=float(row.amount_net) if row.amount_net is not None else None,
+        amount_gross=float(row.amount_gross) if row.amount_gross is not None else None,
+        valid_until=row.valid_until,
+        sent_at=row.sent_at,
+        company_name=company.name if company else None,
+        halopsa_url=halopsa_url,
+        lines=lines,
     )

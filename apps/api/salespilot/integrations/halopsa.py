@@ -229,6 +229,23 @@ class HaloPSAClient:
             return data
         return None
 
+    async def get_quotation_with_lines(self, quotation_id: int) -> dict[str, Any] | None:
+        """Detail of one quotation with the lines array embedded.
+
+        Without include_details=true HaloPSA returns only the header.
+        With it, we get a `lines` list of dicts containing per-row
+        description, quantity, price, cost, profit, productcode, etc.
+        """
+        try:
+            return await self._request(
+                "GET", f"/api/Quotation/{quotation_id}",
+                params={"include_details": "true"},
+            )
+        except HaloPSAError as e:
+            if "404" in str(e) or "403" in str(e):
+                return None
+            raise
+
     async def _list_quotations(
         self, client_id: int | None
     ) -> list[dict[str, Any]]:

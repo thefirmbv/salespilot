@@ -436,10 +436,26 @@ type CompanyLinkSummary = {
 };
 
 function LinksTab() {
+  const qc = useQueryClient();
   const lq = useQuery<CompanyLinkSummary[]>({
     queryKey: ["/unifi/links"],
     queryFn: () => api<CompanyLinkSummary[]>("/unifi/links"),
     refetchInterval: 60_000,
+  });
+  const syncAllMut = useMutation({
+    mutationFn: () => api<any>("/unifi/sync-halopsa-assets", { method: "POST" }),
+    onSuccess: (data) => {
+      const lines = [
+        data.ok ? "OK" : "Fout",
+        `Hosts verwerkt: ${data.hosts_processed}`,
+        `Devices ge-sync: ${data.devices_upserted}`,
+        `  ${data.devices_created} nieuw, ${data.devices_updated} update`,
+        data.errors?.length ? `${data.errors.length} fouten -- zie console` : "",
+      ].filter(Boolean).join("\n");
+      alert(lines);
+      if (data.errors?.length) console.error("Sync errors:", data.errors);
+      qc.invalidateQueries({ queryKey: ["/unifi/hosts"] });
+    },
   });
   const hostsQ = useQuery<HostRow[]>({
     queryKey: ["/unifi/hosts"],
@@ -452,10 +468,23 @@ function LinksTab() {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-        Koppel elke Dream Machine aan een SalesPilot-klant zodat z'n devices
-        meetellen voor de recurring HaloPSA-factuur (vaste fee × device-count).
-        Eén klant kan meerdere Dream Machines hebben — die worden bij elkaar opgeteld.
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 flex-1 min-w-[280px]">
+          Koppel elke Dream Machine aan een SalesPilot-klant zodat z'n devices
+          meetellen voor de recurring HaloPSA-factuur (vaste fee × device-count).
+          Eén klant kan meerdere Dream Machines hebben — die worden bij elkaar opgeteld.
+        </div>
+        <button
+          onClick={() => {
+            if (confirm("Synchroniseer ALLE gekoppelde hosts en hun devices naar HaloPSA als asset?\n\nDevices worden ge-upsert als type \"UniFi Devices\" onder de juiste klant.")) {
+              syncAllMut.mutate();
+            }
+          }}
+          disabled={syncAllMut.isPending}
+          className="rounded-md bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm font-medium disabled:opacity-50"
+        >
+          {syncAllMut.isPending ? "Bezig…" : "Sync alles naar HaloPSA"}
+        </button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

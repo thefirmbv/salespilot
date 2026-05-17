@@ -24,6 +24,7 @@ import { FinancieelDashboard } from "./pages/FinancieelDashboard";
 import { SepaFix } from "./pages/SepaFix";
 import { Unifi } from "./pages/Unifi";
 import { UnifiHostDetail } from "./pages/UnifiHostDetail";
+import { QuotationDetail } from "./pages/QuotationDetail";
 import { Calendar } from "./pages/Calendar";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { SocialPosts, SocialPostEditor } from "./pages/SocialPosts";
@@ -78,6 +79,7 @@ createRoot(root).render(
               <Route path="/financieel/sepa-fix" element={<SepaFix />} />
               <Route path="/unifi" element={<Unifi />} />
               <Route path="/unifi/hosts/:hostId" element={<UnifiHostDetail />} />
+              <Route path="/quotations/:quotationId" element={<QuotationDetail />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/social" element={<SocialPosts />} />
               <Route path="/social/new" element={<SocialPostEditor />} />

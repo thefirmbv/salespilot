@@ -66,31 +66,69 @@ def _map_status(
     approvalstate: Any,
     sent_at: datetime | None,
     now: datetime,
+    expiry: datetime | None = None,
 ) -> str:
-    # Hard signal: internally approved → won.
-    if isinstance(approvalstate, int) and approvalstate == 2:
-        return "accepted"
+    """Map HaloPSA's quotation state to our 5-bucket model.
 
-    # status=6 is HaloPSA's "closed/cancelled" — treat as rejected.
+    HaloPSA stores quote state in two integer fields:
+        status:        sales-side enum
+                       0 = draft / just created
+                       1, 2, 3, 4 = open variants (sent, awaiting, ...)
+                       6 = closed (= rejected or cancelled in HaloPSA UI)
+        approvalstate: internal sign-off
+                       0 = none
+                       1 = pending
+                       2 = approved (= accepted by us internally)
+
+    Mapping rules (in order, first match wins):
+
+        1) status == 6                            -> rejected
+           HaloPSA's explicit "closed" code, used for both cancelled
+           and lost. We treat both as rejected because users mark
+           lost offers this way.
+
+        2) approvalstate == 2                     -> accepted
+           Internally signed off (= won) regardless of status code.
+
+        3) status == 0                            -> draft
+           Concept / not yet sent.
+
+        4) status in (1, 2, 3, 4) and within
+           HaloPSA's expiry_date                  -> sent
+           Active with the customer.
+
+        5) status in (1, 2, 3, 4) and past
+           expiry_date                            -> expired
+           Customer never responded.
+
+        6) otherwise                              -> draft
+           Defensive fallback.
+
+    We removed the old 30/90-day arbitrary cutoffs because HaloPSA
+    already supplies expiry_date per quote (default = date + 30 days,
+    editable per quote in the HaloPSA UI). Using their expiry_date
+    means a quote that the salesperson extended to 60 days stays
+    'sent' for 60 days, not 30.
+    """
+    # 1) Closed/cancelled in HaloPSA = rejected for us.
     if isinstance(status, int) and status == 6:
         return "rejected"
 
-    # Age-based override per user request: anything older than 3 months
-    # without a positive outcome is effectively rejected.
-    if sent_at is not None:
-        age = now - sent_at
-        if age.days >= REJECT_DAYS:
-            return "rejected"
-        if age.days >= EXPIRY_DAYS:
-            return "expired"
+    # 2) Internally approved (signed off, won) = accepted.
+    if isinstance(approvalstate, int) and approvalstate == 2:
+        return "accepted"
 
-    # Active sent: status 1, 2, 3, or 4 with approvalstate in (0,1) means
-    # the quotation is out with the customer.
+    # 3) Pure draft (concept).
+    if isinstance(status, int) and status == 0:
+        return "draft"
+
+    # 4 + 5) Open quote: check HaloPSA's own expiry_date.
     if isinstance(status, int) and status in (1, 2, 3, 4):
+        if expiry is not None and expiry < now:
+            return "expired"
         return "sent"
 
-    # status=0 catches both "just created" and "draft, not yet decided".
-    # Without sent_at age we treat it as draft.
+    # Fallback.
     return "draft"
 
 
@@ -128,7 +166,8 @@ def _map_payload(raw: dict[str, Any], *, now: datetime) -> dict[str, Any]:
     expiry = _parse_dt(raw.get("expiry_date"))
     approved_at = _parse_dt(raw.get("approvaldatetime"))
     status = _map_status(
-        status=status_int, approvalstate=approvalstate, sent_at=sent_at, now=now
+        status=status_int, approvalstate=approvalstate,
+        sent_at=sent_at, now=now, expiry=expiry,
     )
     return {
         "reference": raw.get("ref") or raw.get("title") or (str(raw["id"]) if "id" in raw else None),
