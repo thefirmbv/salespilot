@@ -577,3 +577,84 @@ async def prometheus_metrics(auth: CurrentAuth, db: Db) -> str:
 
     lines.append("")
     return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------
+# Company-link overview (1 klant : N hosts)
+# ----------------------------------------------------------------------
+
+
+class HostStub(BaseModel):
+    host_id: UUID
+    host_name: str
+    model_short: str | None
+    is_online: bool
+    device_count: int
+    devices_online: int
+
+
+class CompanyLinkSummary(BaseModel):
+    company_id: UUID
+    company_name: str
+    halopsa_id: int | None
+    hosts: list[HostStub]
+    total_devices: int
+    total_devices_online: int
+    total_devices_offline: int
+
+
+@router.get("/links", response_model=list[CompanyLinkSummary])
+async def list_company_links(auth: CurrentAuth, db: Db) -> list[CompanyLinkSummary]:
+    """All host->company links grouped by company.
+
+    For the link-overview page: shows how many UniFi hosts each customer
+    has and the rolled-up device counts for billing.
+    """
+    rows = (
+        await db.execute(
+            select(UnifiCompanyLink, UnifiHost, Company)
+            .join(UnifiHost, UnifiHost.id == UnifiCompanyLink.host_id)
+            .join(Company, Company.id == UnifiCompanyLink.company_id)
+            .order_by(Company.name, UnifiHost.name)
+        )
+    ).all()
+
+    # Device counts per host
+    dev_counts = {
+        host_id: (n_total, n_online, n_offline)
+        for host_id, n_total, n_online, n_offline in (
+            await db.execute(
+                select(
+                    UnifiDevice.host_id,
+                    func.count(UnifiDevice.id),
+                    func.count(UnifiDevice.id).filter(UnifiDevice.status == "online"),
+                    func.count(UnifiDevice.id).filter(UnifiDevice.status == "offline"),
+                ).group_by(UnifiDevice.host_id)
+            )
+        ).all()
+    }
+
+    by_company: dict[UUID, CompanyLinkSummary] = {}
+    for link, host, company in rows:
+        n_total, n_online, n_offline = dev_counts.get(host.id, (0, 0, 0))
+        s = by_company.get(company.id)
+        if s is None:
+            s = CompanyLinkSummary(
+                company_id=company.id,
+                company_name=company.name,
+                halopsa_id=getattr(company, "halopsa_id", None),
+                hosts=[],
+                total_devices=0,
+                total_devices_online=0,
+                total_devices_offline=0,
+            )
+            by_company[company.id] = s
+        s.hosts.append(HostStub(
+            host_id=host.id, host_name=host.name,
+            model_short=host.model_short, is_online=host.is_online,
+            device_count=n_total, devices_online=n_online,
+        ))
+        s.total_devices += n_total
+        s.total_devices_online += n_online
+        s.total_devices_offline += n_offline
+    return list(by_company.values())

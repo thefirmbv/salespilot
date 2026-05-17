@@ -84,6 +84,7 @@ export function Unifi() {
             ["dashboard", "Dashboard"],
             ["hosts", "Hosts"],
             ["devices", "Devices"],
+            ["links", "Koppelingen"],
             ["incidents", "Incidents"],
           ].map(([id, label]) => (
             <button
@@ -101,6 +102,7 @@ export function Unifi() {
           {tab === "dashboard" && <DashboardTab />}
           {tab === "hosts" && <HostsTab />}
           {tab === "devices" && <DevicesTab />}
+          {tab === "links" && <LinksTab />}
           {tab === "incidents" && <IncidentsTab />}
         </div>
       </div>
@@ -412,3 +414,117 @@ function KPI({ label, value, sub, tone }: { label: string; value: number; sub?: 
 }
 
 export default Unifi;
+
+// ===== Koppelingen tab =====
+type HostStub = {
+  host_id: string;
+  host_name: string;
+  model_short: string | null;
+  is_online: boolean;
+  device_count: number;
+  devices_online: number;
+};
+
+type CompanyLinkSummary = {
+  company_id: string;
+  company_name: string;
+  halopsa_id: number | null;
+  hosts: HostStub[];
+  total_devices: number;
+  total_devices_online: number;
+  total_devices_offline: number;
+};
+
+function LinksTab() {
+  const lq = useQuery<CompanyLinkSummary[]>({
+    queryKey: ["/unifi/links"],
+    queryFn: () => api<CompanyLinkSummary[]>("/unifi/links"),
+    refetchInterval: 60_000,
+  });
+  const hostsQ = useQuery<HostRow[]>({
+    queryKey: ["/unifi/hosts"],
+    queryFn: () => api<HostRow[]>("/unifi/hosts"),
+  });
+
+  const totalHosts = hostsQ.data?.length ?? 0;
+  const linkedHosts = hostsQ.data?.filter((h) => h.company_id).length ?? 0;
+  const unlinked = (hostsQ.data || []).filter((h) => !h.company_id);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+        Koppel elke Dream Machine aan een SalesPilot-klant zodat z'n devices
+        meetellen voor de recurring HaloPSA-factuur (vaste fee × device-count).
+        Eén klant kan meerdere Dream Machines hebben — die worden bij elkaar opgeteld.
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KPI label="Klanten gekoppeld" value={lq.data?.length ?? 0} tone="emerald" />
+        <KPI label="Hosts gekoppeld" value={linkedHosts} sub={`van ${totalHosts}`} tone={linkedHosts === totalHosts ? "emerald" : "amber"} />
+        <KPI label="Niet gekoppeld" value={unlinked.length} tone={unlinked.length > 0 ? "amber" : "emerald"} />
+        <KPI label="Totaal devices (gekoppeld)" value={(lq.data || []).reduce((s, c) => s + c.total_devices, 0)} />
+      </div>
+
+      {/* Per klant */}
+      {(lq.data || []).map((c) => (
+        <div key={c.company_id} className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
+          <div className="border-b border-slate-200 px-4 py-2 flex items-baseline justify-between gap-3">
+            <div className="flex items-baseline gap-3">
+              <h3 className="text-sm font-medium">{c.company_name}</h3>
+              <span className="text-xs text-slate-500">
+                {c.hosts.length} host{c.hosts.length !== 1 && "s"} · <strong>{c.total_devices} devices</strong>
+                {c.halopsa_id ? <> · Halo #{c.halopsa_id}</> : <span className="text-amber-700"> · geen Halo-koppeling</span>}
+              </span>
+            </div>
+            <Link to={`/companies/${c.company_id}`} className="text-xs text-slate-500 hover:underline">→ klant</Link>
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {c.hosts.map((h) => (
+              <li key={h.host_id}>
+                <Link
+                  to={`/unifi/hosts/${h.host_id}`}
+                  className="grid grid-cols-[1.6fr_90px_100px_100px] items-center gap-3 px-4 py-2 text-sm hover:bg-slate-50"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`inline-block w-2 h-2 rounded-full ${h.is_online ? "bg-emerald-500" : "bg-rose-500"}`} />
+                    <span className="truncate font-medium">{h.host_name}</span>
+                  </div>
+                  <code className="text-[11px] text-slate-500">{h.model_short || "?"}</code>
+                  <div className="text-right tabular-nums text-xs">{h.device_count} devices</div>
+                  <div className="text-right tabular-nums text-xs text-emerald-700">{h.devices_online}/{h.device_count} online</div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+
+      {/* Niet-gekoppelde hosts */}
+      {unlinked.length > 0 && (
+        <div className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
+          <div className="border-b border-slate-200 px-4 py-2 text-sm font-medium text-amber-800 bg-amber-50">
+            ⚠ {unlinked.length} host{unlinked.length !== 1 && "s"} nog niet gekoppeld
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {unlinked.map((h) => (
+              <li key={h.id}>
+                <Link
+                  to={`/unifi/hosts/${h.id}`}
+                  className="grid grid-cols-[1.6fr_90px_100px_120px] items-center gap-3 px-4 py-2 text-sm hover:bg-slate-50"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`inline-block w-2 h-2 rounded-full ${h.is_online ? "bg-emerald-500" : "bg-rose-500"}`} />
+                    <span className="truncate font-medium">{h.name}</span>
+                  </div>
+                  <code className="text-[11px] text-slate-500">{h.model_short || "?"}</code>
+                  <div className="text-right tabular-nums text-xs">{h.device_count} devices</div>
+                  <div className="text-right text-xs text-brand-600 hover:underline">Koppel →</div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
