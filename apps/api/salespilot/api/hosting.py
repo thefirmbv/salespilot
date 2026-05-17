@@ -97,6 +97,7 @@ class PleskSubscriptionRow(BaseModel):
     company_id: UUID | None
     company_name: str | None
     halopsa_asset_id: int | None
+    halopsa_product_id: int | None
     halopsa_synced_at: datetime | None
     last_polled: datetime | None
 
@@ -142,6 +143,7 @@ async def list_subscriptions(
             company_id=link.company_id if link else None,
             company_name=comp.name if comp else None,
             halopsa_asset_id=s.halopsa_asset_id,
+            halopsa_product_id=s.halopsa_product_id,
             halopsa_synced_at=s.halopsa_synced_at,
             last_polled=s.last_polled,
         ))
@@ -314,6 +316,7 @@ class OpenproviderDomainRow(BaseModel):
     company_id: UUID | None
     company_name: str | None
     halopsa_asset_id: int | None
+    halopsa_product_id: int | None
     halopsa_synced_at: datetime | None
 
 
@@ -361,6 +364,7 @@ async def list_op_domains(
             company_id=link.company_id if link else None,
             company_name=comp.name if comp else None,
             halopsa_asset_id=d.halopsa_asset_id,
+            halopsa_product_id=d.halopsa_product_id,
             halopsa_synced_at=d.halopsa_synced_at,
         ))
     return out
@@ -506,7 +510,7 @@ async def create_plesk_subscription_manual(
         disk_used_mb=0, mailboxes_count=0,
         company_id=body.company_id,
         company_name=company_name,
-        halopsa_asset_id=None, halopsa_synced_at=None,
+        halopsa_asset_id=None, halopsa_product_id=None, halopsa_synced_at=None,
         last_polled=None,
     )
 
@@ -585,7 +589,7 @@ async def create_op_domain_manual(
         registered_at=dom.registered_at, expires_at=dom.expires_at,
         nameservers=[],
         company_id=body.company_id, company_name=company_name,
-        halopsa_asset_id=None, halopsa_synced_at=None,
+        halopsa_asset_id=None, halopsa_product_id=None, halopsa_synced_at=None,
     )
 
 
@@ -1103,3 +1107,162 @@ async def list_audit_log(
         )
         for a, u in rows
     ]
+
+
+# ======================================================================
+# HaloPSA product/item dropdown + per-asset product toewijzing
+# ======================================================================
+# Jasper: 1 sub = 1 asset met variabele tarief (per asset eigen product).
+# /halopsa/items endpoint zit op api/integrations.py niet; we maken
+# een lokale wrapper hier zodat de UI eenvoudig dropdowns kan vullen.
+
+
+@plesk_router.get("/halopsa-products")
+async def list_halopsa_hosting_products(
+    auth: CurrentAuth, db: Db,
+    search: str | None = Query(default=None),
+) -> list[dict[str, Any]]:
+    """List HaloPSA Items (= recurring products) voor de product-
+    dropdown bij subscriptions/domeinen. Optionele zoekstring."""
+    from salespilot.models.integrations import Integration
+    from salespilot.integrations.halopsa import HaloPSAClient, HaloPSACredentials, HaloPSAError
+    halo = (await db.execute(
+        select(Integration).where(Integration.kind == "halopsa")
+    )).scalar_one_or_none()
+    if halo is None or not halo.is_enabled:
+        raise HTTPException(status_code=400, detail="HaloPSA niet ingesteld.")
+    cfg = halo.config_json or {}
+    creds = HaloPSACredentials(
+        base_url=cfg.get("base_url", ""), client_id=cfg.get("client_id", ""),
+        client_secret=cfg.get("client_secret", ""), tenant_id=cfg.get("tenant_id"),
+        scopes=cfg.get("scopes") or "all",
+    )
+    params: dict[str, Any] = {"count": 200}
+    if search:
+        params["search"] = search
+    try:
+        async with HaloPSAClient(creds) as c:
+            d = await c._request("GET", "/api/Item", params=params)
+    except HaloPSAError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    items = d if isinstance(d, list) else (d.get("items") or d.get("results") or [])
+    return [
+        {
+            "id": int(i["id"]),
+            "name": i.get("name", ""),
+            "code": i.get("itemcode", ""),
+            "price": i.get("baseprice") or i.get("price") or 0,
+            "billingperiod": i.get("billingperiod"),
+        }
+        for i in items
+        if i.get("id")
+    ]
+
+
+class SetProductBody(BaseModel):
+    halopsa_product_id: int | None
+
+
+@plesk_router.put("/subscriptions/{sub_id}/product")
+async def set_subscription_product(
+    sub_id: UUID, body: SetProductBody, auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    sub = (await db.execute(
+        select(PleskSubscription).where(PleskSubscription.id == sub_id)
+    )).scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=404, detail="Subscription niet gevonden")
+    sub.halopsa_product_id = body.halopsa_product_id
+    await db.flush()
+    return {"ok": True, "halopsa_product_id": sub.halopsa_product_id}
+
+
+@op_router.put("/domains/{domain_id}/product")
+async def set_domain_product(
+    domain_id: UUID, body: SetProductBody, auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    dom = (await db.execute(
+        select(OpenproviderDomain).where(OpenproviderDomain.id == domain_id)
+    )).scalar_one_or_none()
+    if dom is None:
+        raise HTTPException(status_code=404, detail="Domein niet gevonden")
+    dom.halopsa_product_id = body.halopsa_product_id
+    await db.flush()
+    return {"ok": True, "halopsa_product_id": dom.halopsa_product_id}
+
+
+# Openprovider gebruikt dezelfde products endpoint
+@op_router.get("/halopsa-products")
+async def list_halopsa_domain_products(
+    auth: CurrentAuth, db: Db,
+    search: str | None = Query(default=None),
+) -> list[dict[str, Any]]:
+    return await list_halopsa_hosting_products(auth, db, search)
+
+
+# ======================================================================
+# Sync naar HaloPSA -- echte asset write
+# ======================================================================
+
+
+async def _halopsa_client_factory(db):
+    from salespilot.models.integrations import Integration
+    from salespilot.integrations.halopsa import HaloPSAClient, HaloPSACredentials
+    halo = (await db.execute(
+        select(Integration).where(Integration.kind == "halopsa")
+    )).scalar_one_or_none()
+    if halo is None or not halo.is_enabled:
+        raise HTTPException(status_code=400, detail="HaloPSA niet ingesteld.")
+    cfg = halo.config_json or {}
+    creds = HaloPSACredentials(
+        base_url=cfg.get("base_url", ""), client_id=cfg.get("client_id", ""),
+        client_secret=cfg.get("client_secret", ""), tenant_id=cfg.get("tenant_id"),
+        scopes=cfg.get("scopes") or "all",
+    )
+    return HaloPSAClient(creds)
+
+
+@plesk_router.post("/sync-halopsa-assets")
+async def plesk_sync_halopsa(
+    auth: CurrentAuth, db: Db,
+    company_id: UUID | None = Query(default=None),
+) -> dict[str, Any]:
+    """Spiegel alle gekoppelde Plesk subscriptions als HaloPSA Asset
+    onder AssetType 'Plesk Subscription' (group 'Domeinnaam en
+    Hosting'). 1 sub = 1 asset = 1 factuurregel (qty 1).
+    """
+    from salespilot.integrations.hosting_halopsa_sync import (
+        sync_plesk_to_halopsa,
+    )
+    from salespilot.integrations.halopsa import HaloPSAError
+    try:
+        async with await _halopsa_client_factory(db) as halo:
+            r = await sync_plesk_to_halopsa(
+                db, org_id=auth.org_id, halopsa_client=halo,
+                company_id=company_id,
+            )
+    except HaloPSAError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return r
+
+
+@op_router.post("/sync-halopsa-assets")
+async def op_sync_halopsa(
+    auth: CurrentAuth, db: Db,
+    company_id: UUID | None = Query(default=None),
+) -> dict[str, Any]:
+    """Spiegel alle gekoppelde Openprovider domeinen als HaloPSA Asset
+    onder AssetType 'Domain Registration' (group 'Domeinnaam en Hosting')."""
+    from salespilot.integrations.hosting_halopsa_sync import (
+        sync_openprovider_to_halopsa,
+    )
+    from salespilot.integrations.halopsa import HaloPSAError
+    try:
+        async with await _halopsa_client_factory(db) as halo:
+            r = await sync_openprovider_to_halopsa(
+                db, org_id=auth.org_id, halopsa_client=halo,
+                company_id=company_id,
+            )
+    except HaloPSAError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return r

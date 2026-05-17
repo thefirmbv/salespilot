@@ -82,8 +82,10 @@ class PleskSubscription(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     mailboxes_count: Mapped[int] = mapped_column(Integer, default=0)
     databases_count: Mapped[int] = mapped_column(Integer, default=0)
     created_in_plesk: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # HaloPSA link
+    # HaloPSA link (per asset, voor variabele tarieven)
     halopsa_asset_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    halopsa_product_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    halopsa_assettype_id: Mapped[int | None] = mapped_column(Integer)
     halopsa_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Poll
     last_polled: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -183,8 +185,10 @@ class OpenproviderDomain(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     nameservers: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     owner_handle: Mapped[str | None] = mapped_column(String(120))
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
-    # HaloPSA link
+    # HaloPSA link (per asset)
     halopsa_asset_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    halopsa_product_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    halopsa_assettype_id: Mapped[int | None] = mapped_column(Integer)
     halopsa_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_polled: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)

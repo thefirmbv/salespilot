@@ -28,6 +28,7 @@ type SubRow = {
   company_id: string | null;
   company_name: string | null;
   halopsa_asset_id: number | null;
+  halopsa_product_id: number | null;
   halopsa_synced_at: string | null;
   last_polled: string | null;
 };
@@ -158,6 +159,7 @@ function SubsTab() {
 
   return (
     <div className="space-y-3">
+      <SyncAllBar />
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-sm">
           {(["all", "linked", "unlinked"] as const).map(f => (
@@ -179,11 +181,12 @@ function SubsTab() {
       {showManual && <ManualForm onClose={() => { setShowManual(false); qc.invalidateQueries({ queryKey: ["/plesk/subscriptions"] }); }} />}
 
       <div className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
-        <div className="grid grid-cols-[1.4fr_1fr_120px_1fr_100px_100px] gap-3 border-b border-slate-200 px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500">
+        <div className="grid grid-cols-[1.4fr_1fr_100px_1fr_140px_90px_90px] gap-3 border-b border-slate-200 px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500">
           <div>Subscription</div>
           <div>Hoofd-domein</div>
           <div>Plan</div>
           <div>Klant</div>
+          <div>Product (tarief)</div>
           <div className="text-right">HaloPSA</div>
           <div className="text-right">Status</div>
         </div>
@@ -192,7 +195,7 @@ function SubsTab() {
             Geen subscriptions. Klik <strong>+ Handmatig</strong> om er één toe te voegen.
           </div>
         ) : rows.map(s => (
-          <div key={s.id} className="grid grid-cols-[1.4fr_1fr_120px_1fr_100px_100px] items-center gap-3 border-b border-slate-100 px-4 py-2 text-sm hover:bg-slate-50">
+          <div key={s.id} className="grid grid-cols-[1.4fr_1fr_100px_1fr_140px_90px_90px] items-center gap-3 border-b border-slate-100 px-4 py-2 text-sm hover:bg-slate-50">
             <div className="min-w-0 flex items-center gap-2">
               <span className={`inline-block w-2 h-2 rounded-full ${s.status === "active" ? "bg-emerald-500" : s.status === "suspended" ? "bg-amber-500" : "bg-rose-500"}`} />
               <span className="truncate font-medium">{s.name}</span>
@@ -206,6 +209,13 @@ function SubsTab() {
               ) : (
                 <CompanyPicker subId={s.id} onLinked={() => qc.invalidateQueries({ queryKey: ["/plesk/subscriptions"] })} />
               )}
+            </div>
+            <div className="text-xs">
+              <ProductPicker
+                productId={s.halopsa_product_id}
+                onChange={(pid) => api(`/plesk/subscriptions/${s.id}/product`, { method: "PUT", body: JSON.stringify({ halopsa_product_id: pid }) }).then(() => qc.invalidateQueries({ queryKey: ["/plesk/subscriptions"] }))}
+                listUrl="/plesk/halopsa-products"
+              />
             </div>
             <div className="text-right text-[11px]">
               {s.halopsa_asset_id ? (
@@ -405,5 +415,103 @@ function Field({ label, value, onChange, placeholder, required }: any) {
     </div>
   );
 }
+
+
+function SyncAllBar() {
+  const qc = useQueryClient();
+  const syncMut = useMutation({
+    mutationFn: () => api<any>("/plesk/sync-halopsa-assets", { method: "POST" }),
+    onSuccess: (r) => {
+      const lines = [
+        r.ok ? "✓" : "✗",
+        `Assets ge-sync: ${r.assets_upserted} (${r.assets_created} nieuw, ${r.assets_updated} update)`,
+        r.errors?.length ? `${r.errors.length} fouten — zie console` : "",
+        r.detail || "",
+      ].filter(Boolean).join("\n");
+      alert(lines);
+      if (r.errors?.length) console.error("Sync errors:", r.errors);
+      qc.invalidateQueries({ queryKey: ["/plesk/subscriptions"] });
+    },
+  });
+  return (
+    <div className="flex items-baseline justify-between gap-3 flex-wrap rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+      <div>
+        <strong>Sync naar HaloPSA</strong>
+        <div className="text-xs mt-0.5">
+          Maakt 1 asset per gekoppelde subscription onder AssetGroup
+          "Domeinnaam en Hosting", AssetType "Plesk Subscription".
+          Asset.name = subscription naam, item_id = gekozen product.
+        </div>
+      </div>
+      <button
+        onClick={() => {
+          if (confirm("Sync alle gekoppelde subscriptions naar HaloPSA?\n\nVoor elke sub wordt een asset upsert met:\n - AssetGroup: Domeinnaam en Hosting\n - AssetType: Plesk Subscription\n - Naam: subscription naam\n - Tarief: het gekozen Product per asset")) {
+            syncMut.mutate();
+          }
+        }}
+        disabled={syncMut.isPending}
+        className="rounded-md bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+      >
+        {syncMut.isPending ? "Bezig…" : "Sync alles"}
+      </button>
+    </div>
+  );
+}
+
+function ProductPicker({
+  productId, onChange, listUrl,
+}: {
+  productId: number | null;
+  onChange: (id: number | null) => void;
+  listUrl: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const pq = useQuery<{ id: number; name: string; price: number }[]>({
+    queryKey: [listUrl, search],
+    queryFn: () => api<any[]>(`${listUrl}${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+    enabled: open,
+  });
+  const current = (pq.data || []).find(p => p.id === productId);
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)}
+        className={`text-xs text-left ${productId ? "text-slate-700" : "text-amber-700 hover:underline"}`}>
+        {productId ? (
+          <span title={current?.name || `Product #${productId}`}>
+            #{productId}{current?.price ? ` (€${current.price})` : ""}
+          </span>
+        ) : "Kies tarief…"}
+      </button>
+    );
+  }
+  return (
+    <div className="rounded border border-slate-300 bg-white p-2 space-y-1 z-10 relative">
+      <input value={search} onChange={(e) => setSearch(e.target.value)} autoFocus
+        placeholder="Zoek product…"
+        className="w-full rounded border border-slate-200 px-1.5 py-1 text-xs" />
+      <div className="max-h-48 overflow-y-auto space-y-0.5">
+        {productId && (
+          <button onClick={() => { onChange(null); setOpen(false); }}
+            className="w-full text-left px-2 py-1 text-xs hover:bg-rose-50 rounded text-rose-700">
+            ✗ Geen product (asset wordt niet gefactureerd)
+          </button>
+        )}
+        {(pq.data || []).map(p => (
+          <button key={p.id} onClick={() => { onChange(p.id); setOpen(false); }}
+            className={`w-full text-left px-2 py-1 text-xs hover:bg-slate-100 rounded ${p.id === productId ? "bg-brand-100 font-semibold" : ""}`}>
+            <div>{p.name}</div>
+            {p.price > 0 && <div className="text-[10px] text-slate-500">€{p.price}</div>}
+          </button>
+        ))}
+        {pq.isLoading && <div className="text-xs text-slate-500 p-2">Laden…</div>}
+        {(pq.data?.length ?? 0) === 0 && !pq.isLoading && <div className="text-xs text-slate-500 p-2">Geen resultaten</div>}
+      </div>
+      <button onClick={() => setOpen(false)} className="text-[10px] text-slate-500">Sluiten</button>
+    </div>
+  );
+}
+
+export { ProductPicker };
 
 export default Plesk;

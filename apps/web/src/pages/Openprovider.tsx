@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { ProductPicker } from "./Plesk";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
@@ -26,6 +27,7 @@ type DomainRow = {
   company_id: string | null;
   company_name: string | null;
   halopsa_asset_id: number | null;
+  halopsa_product_id: number | null;
   halopsa_synced_at: string | null;
 };
 
@@ -130,6 +132,20 @@ function DomainsTab({ expiringOnly = false }: { expiringOnly?: boolean }) {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [showManual, setShowManual] = useState(false);
+  const syncAllMut = useMutation({
+    mutationFn: () => api<any>("/openprovider/sync-halopsa-assets", { method: "POST" }),
+    onSuccess: (r) => {
+      const lines = [
+        r.ok ? "✓" : "✗",
+        `Assets ge-sync: ${r.assets_upserted} (${r.assets_created} nieuw, ${r.assets_updated} update)`,
+        r.errors?.length ? `${r.errors.length} fouten — zie console` : "",
+        r.detail || "",
+      ].filter(Boolean).join("\n");
+      alert(lines);
+      if (r.errors?.length) console.error("Sync errors:", r.errors);
+      qc.invalidateQueries({ queryKey: ["/openprovider/domains"] });
+    },
+  });
 
   const dq = useQuery<DomainRow[]>({
     queryKey: ["/openprovider/domains", expiringOnly],
@@ -149,6 +165,19 @@ function DomainsTab({ expiringOnly = false }: { expiringOnly?: boolean }) {
         <input value={search} onChange={(e) => setSearch(e.target.value)}
           placeholder="Zoek domein of klant…"
           className="min-w-[260px] rounded-md border border-slate-300 px-2 py-1.5 text-sm flex-1" />
+        {!expiringOnly && (
+          <button
+            onClick={() => {
+              if (confirm("Sync alle gekoppelde domeinen naar HaloPSA?\n\nVoor elk domein wordt een asset upsert met:\n - AssetGroup: Domeinnaam en Hosting\n - AssetType: Domain Registration\n - Naam: de domeinnaam\n - Tarief: het gekozen Product per asset")) {
+                syncAllMut.mutate();
+              }
+            }}
+            disabled={syncAllMut.isPending}
+            className="rounded-md bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          >
+            {syncAllMut.isPending ? "Bezig…" : "Sync alles"}
+          </button>
+        )}
         {!expiringOnly && (
           <>
             <Link to="/openprovider/register"
@@ -170,11 +199,12 @@ function DomainsTab({ expiringOnly = false }: { expiringOnly?: boolean }) {
       {showManual && <ManualForm onClose={() => { setShowManual(false); qc.invalidateQueries({ queryKey: ["/openprovider/domains"] }); }} />}
 
       <div className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
-        <div className="grid grid-cols-[1.4fr_110px_100px_1fr_90px_70px_90px] gap-3 border-b border-slate-200 px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500">
+        <div className="grid grid-cols-[1.4fr_100px_90px_1fr_140px_80px_70px_90px] gap-3 border-b border-slate-200 px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500">
           <div>Domein</div>
           <div>Vervalt</div>
           <div>Auto-renew</div>
           <div>Klant</div>
+          <div>Product (tarief)</div>
           <div className="text-right">HaloPSA</div>
           <div className="text-right">Status</div>
           <div className="text-right">Acties</div>
@@ -188,7 +218,7 @@ function DomainsTab({ expiringOnly = false }: { expiringOnly?: boolean }) {
           const urgent = days !== null && days <= 30;
           const warn = days !== null && days <= 90;
           return (
-            <div key={d.id} className="grid grid-cols-[1.4fr_110px_100px_1fr_90px_70px_90px] items-center gap-3 border-b border-slate-100 px-4 py-2 text-sm hover:bg-slate-50">
+            <div key={d.id} className="grid grid-cols-[1.4fr_100px_90px_1fr_140px_80px_70px_90px] items-center gap-3 border-b border-slate-100 px-4 py-2 text-sm hover:bg-slate-50">
               <div className="flex items-center gap-2 min-w-0">
                 <span className={`inline-block w-2 h-2 rounded-full ${d.status === "active" ? "bg-emerald-500" : "bg-rose-500"}`} />
                 <span className="truncate font-medium">{d.name}</span>
@@ -204,6 +234,13 @@ function DomainsTab({ expiringOnly = false }: { expiringOnly?: boolean }) {
                 ) : (
                   <CompanyPicker domainId={d.id} onLinked={() => qc.invalidateQueries({ queryKey: ["/openprovider/domains"] })} />
                 )}
+              </div>
+              <div className="text-xs">
+                <ProductPicker
+                  productId={d.halopsa_product_id}
+                  onChange={(pid) => api(`/openprovider/domains/${d.id}/product`, { method: "PUT", body: JSON.stringify({ halopsa_product_id: pid }) }).then(() => qc.invalidateQueries({ queryKey: ["/openprovider/domains"] }))}
+                  listUrl="/openprovider/halopsa-products"
+                />
               </div>
               <div className="text-right text-[11px]">
                 {d.halopsa_asset_id ? <span className="text-emerald-700">#{d.halopsa_asset_id}</span> : <span className="text-slate-400">—</span>}

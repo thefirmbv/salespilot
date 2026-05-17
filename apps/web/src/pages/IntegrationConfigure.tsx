@@ -413,6 +413,21 @@ export function IntegrationConfigure() {
         {kind === "linkedin" && <LinkedInOAuthBlock cfg={integrationQ.data?.config_public ?? {}} kind={kind!} searchParams={searchParams} setSearchParams={setSearchParams} />}
         {kind === "m365_sso" && <M365SsoInfoBlock cfg={integrationQ.data?.config_public ?? {}} />}
         {kind === "wespennest" && <WespennestSettingsBlock cfg={integrationQ.data?.config_public ?? {}} form={form} setForm={setForm} />}
+        {kind === "plesk" && (
+          <div className="mt-4 rounded-md bg-blue-50 border border-blue-200 p-3 text-sm flex items-baseline justify-between gap-3 flex-wrap">
+            <div>
+              <strong className="text-blue-900">Multi-server beheer</strong>
+              <div className="text-xs text-blue-800 mt-0.5">
+                Voeg je 4-5 Plesk-servers toe (elk met eigen URL + API key).
+                De velden hierboven gelden als defaults voor alle servers.
+              </div>
+            </div>
+            <Link to="/settings/integrations/plesk/servers"
+              className="rounded-md bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-sm">
+              Servers beheren →
+            </Link>
+          </div>
+        )}
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <button
