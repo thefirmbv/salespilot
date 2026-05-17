@@ -39,7 +39,10 @@ def _sub_status(raw: dict[str, Any]) -> str:
 
 async def poll_plesk_for_org(
     db: AsyncSession, *, org_id: UUID, client: PleskClient,
+    server_id: UUID | None = None,
 ) -> dict[str, Any]:
+    """Poll one Plesk server. server_id wordt op elke row gezet voor
+    multi-server traceability."""
     polled_at = datetime.now(UTC)
 
     subs_raw = await client.list_subscriptions()
@@ -64,10 +67,13 @@ async def poll_plesk_for_org(
         if existing is None:
             existing = PleskSubscription(
                 id=uuid4(), org_id=org_id, plesk_id=pid,
+                server_id=server_id,
             )
             db.add(existing)
             subs_new += 1
             subs_by_pid[pid] = existing
+        elif server_id is not None:
+            existing.server_id = server_id
 
         if previous_status and previous_status != new_status:
             db.add(PleskStateEvent(
@@ -122,10 +128,13 @@ async def poll_plesk_for_org(
             existing = PleskDomain(
                 id=uuid4(), org_id=org_id, plesk_id=pid,
                 name=(raw.get("name") or "")[:255],
+                server_id=server_id,
             )
             db.add(existing)
             domains_new += 1
             domains_by_pid[pid] = existing
+        elif server_id is not None:
+            existing.server_id = server_id
         # Match domain -> subscription
         sub_pid = str(raw.get("subscription_id") or raw.get("parent_id") or "")
         if sub_pid and sub_pid in subs_by_pid:

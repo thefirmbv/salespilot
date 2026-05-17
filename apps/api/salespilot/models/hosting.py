@@ -36,11 +36,38 @@ from salespilot.models import Base, TenantScoped, Timestamps, UUIDPrimaryKey
 # ======================================================================
 
 
+class PleskServer(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
+    """One Plesk server. Multiple servers can run per org (4-5 is common
+    for a hosting reseller). Each server has its own URL + API key.
+    The integration row 'plesk' holds shared defaults (asset_type,
+    halopsa_product_id, poll_interval); this table holds per-server
+    credentials."""
+    __tablename__ = "plesk_servers"
+
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_status: Mapped[str | None] = mapped_column(String(32))
+    last_sync_message: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_plesk_servers_org_name"),
+    )
+
+
 class PleskSubscription(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     """One Plesk hosting subscription = one billable asset."""
     __tablename__ = "plesk_subscriptions"
 
     plesk_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    server_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("plesk_servers.id", ondelete="SET NULL"),
+        index=True,
+    )
     name: Mapped[str] = mapped_column(String(255), default="")
     main_domain: Mapped[str | None] = mapped_column(String(255), index=True)
     owner_login: Mapped[str | None] = mapped_column(String(120))
@@ -76,6 +103,9 @@ class PleskDomain(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     __tablename__ = "plesk_domains"
 
     plesk_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    server_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("plesk_servers.id", ondelete="SET NULL"),
+    )
     subscription_id: Mapped[UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("plesk_subscriptions.id", ondelete="CASCADE"),
@@ -186,4 +216,39 @@ class OpenproviderCompanyLink(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
     __table_args__ = (
         UniqueConstraint("org_id", "domain_id",
                          name="uq_op_links_domain"),
+    )
+
+
+
+# ======================================================================
+# Openprovider audit log -- domain register/cancel/auto_renew_change
+# ======================================================================
+
+
+class OpenproviderAuditLog(UUIDPrimaryKey, TenantScoped, Timestamps, Base):
+    """Every write-action against Openprovider is logged here.
+
+    Why: registrations cost real money and cancellations are
+    time-bound. We need a paper trail for who did what, with the
+    Openprovider response captured for debugging failures.
+    """
+    __tablename__ = "openprovider_audit_log"
+
+    user_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    # register | cancel | auto_renew_on | auto_renew_off | nameserver_change
+    domain_name: Mapped[str | None] = mapped_column(String(255))
+    domain_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("openprovider_domains.id", ondelete="SET NULL"),
+    )
+    status: Mapped[str] = mapped_column(String(16), default="ok")  # ok|error
+    request_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    response_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )

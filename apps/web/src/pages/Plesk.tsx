@@ -62,11 +62,17 @@ export function Plesk() {
   return (
     <div className="space-y-4">
       <div className="overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">
-        <div className="border-b border-slate-200 px-4 py-3">
-          <h1 className="text-lg font-medium">🌐 Plesk hosting</h1>
-          <div className="mt-0.5 text-xs text-slate-500">
-            1 subscription = 1 website = 1 factuurregel · klant-koppeling + HaloPSA asset-sync
+        <div className="border-b border-slate-200 px-4 py-3 flex items-baseline justify-between gap-3 flex-wrap">
+          <div>
+            <h1 className="text-lg font-medium">🌐 Plesk hosting</h1>
+            <div className="mt-0.5 text-xs text-slate-500">
+              1 subscription = 1 website = 1 factuurregel · klant-koppeling + HaloPSA asset-sync
+            </div>
           </div>
+          <Link to="/settings/integrations/plesk/servers"
+            className="rounded-md bg-slate-100 hover:bg-slate-200 px-3 py-1.5 text-sm">
+            ⚙ Servers beheren
+          </Link>
         </div>
         <div className="flex gap-4 border-b border-slate-200 px-4">
           {[

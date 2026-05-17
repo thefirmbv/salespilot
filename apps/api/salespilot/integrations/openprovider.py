@@ -186,3 +186,140 @@ class OpenproviderClient:
             "total_domains": total or len(domains),
             "checked_at": datetime.now(UTC).isoformat(),
         }
+
+
+    # ------------------------------------------------------------------
+    # Domain availability + price
+    # ------------------------------------------------------------------
+
+    async def check_availability(
+        self, name: str, extension: str,
+    ) -> dict[str, Any]:
+        """Check if a domain is available for registration.
+
+        Returns Openprovider's response which contains:
+          status: 'free' | 'active' | 'invalid' | 'reserved' | ...
+          premium: boolean
+          price: { product: { price: x, currency: 'EUR' }, ... } (if premium)
+        """
+        d = await self._request(
+            "POST", "/domains/check",
+            json={
+                "domains": [{"name": name, "extension": extension}],
+                "with_price": True,
+            },
+        )
+        if isinstance(d, dict):
+            data = d.get("data") or {}
+            results = data.get("results") or []
+            if results:
+                return results[0]
+        return {"status": "unknown"}
+
+    async def get_domain_price(self, extension: str) -> dict[str, Any]:
+        """Retail price for one registration year of this TLD.
+
+        Note: this returns YOUR Openprovider price (= reseller price).
+        Premium domains have different prices via check_availability.
+        """
+        try:
+            d = await self._request(
+                "GET", "/domains/prices",
+                params={"extension": extension, "operation": "create", "period": 1},
+            )
+            if isinstance(d, dict):
+                return d.get("data") or {}
+        except OpenproviderError:
+            pass
+        return {}
+
+    # ------------------------------------------------------------------
+    # Customer/contact handles
+    # ------------------------------------------------------------------
+
+    async def list_customers(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        d = await self._request(
+            "GET", "/customers", params={"limit": limit, "offset": offset},
+        )
+        if isinstance(d, dict):
+            data = d.get("data") or {}
+            return data.get("results") or []
+        return []
+
+    async def create_customer(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create a new contact handle. Openprovider requires:
+          - company_name (or first_name + last_name for personal)
+          - email
+          - phone in E.164 format (+31...)
+          - address (city, country, street, zipcode)
+          - locale (e.g. 'nl_NL')
+        """
+        d = await self._request("POST", "/customers", json=payload)
+        if isinstance(d, dict):
+            return d.get("data") or {}
+        return {}
+
+    # ------------------------------------------------------------------
+    # Domain registration (THE money endpoint)
+    # ------------------------------------------------------------------
+
+    async def register_domain(
+        self,
+        name: str, extension: str,
+        period: int = 1,
+        owner_handle: str | None = None,
+        admin_handle: str | None = None,
+        tech_handle: str | None = None,
+        billing_handle: str | None = None,
+        name_servers: list[str] | None = None,
+        auto_renew: bool = True,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register a new domain. Returns Openprovider's response
+        containing the new domain id on success. Caller is expected
+        to have already done check_availability + price preview.
+
+        WARNING: this is a real registration that costs money.
+        """
+        payload: dict[str, Any] = {
+            "domain": {"name": name, "extension": extension},
+            "period": period,
+            "autorenew": "on" if auto_renew else "off",
+        }
+        if owner_handle:
+            payload["owner_handle"] = owner_handle
+        if admin_handle:
+            payload["admin_handle"] = admin_handle
+        if tech_handle:
+            payload["tech_handle"] = tech_handle
+        if billing_handle:
+            payload["billing_handle"] = billing_handle
+        if name_servers:
+            payload["name_servers"] = [{"name": ns} for ns in name_servers]
+        if extra:
+            payload.update(extra)
+        d = await self._request("POST", "/domains", json=payload)
+        if isinstance(d, dict):
+            return d.get("data") or {}
+        return {}
+
+    # ------------------------------------------------------------------
+    # Domain modification + cancellation
+    # ------------------------------------------------------------------
+
+    async def update_autorenew(
+        self, domain_id: int, auto_renew: bool,
+    ) -> dict[str, Any]:
+        """Toggle auto-renew. The soft 'cancel' = set to off; domain
+        will expire on its current expiry_date. Reversible."""
+        d = await self._request(
+            "PUT", f"/domains/{domain_id}",
+            json={"autorenew": "on" if auto_renew else "off"},
+        )
+        return (d or {}).get("data") if isinstance(d, dict) else {}
+
+    async def cancel_domain(self, domain_id: int) -> dict[str, Any]:
+        """Hard cancel. Only valid within Openprovider's grace period
+        (~5 days after registration for most TLDs). NOT REVERSIBLE."""
+        d = await self._request("DELETE", f"/domains/{domain_id}")
+        return (d or {}).get("data") if isinstance(d, dict) else {}

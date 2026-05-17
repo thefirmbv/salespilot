@@ -1343,32 +1343,72 @@ async def test_plesk(auth: CurrentAuth, db: Db) -> TestConnectionResult:
 
 @router.post(f"/{PLESK_KIND}/sync", response_model=SyncResult)
 async def sync_plesk(auth: CurrentAuth, db: Db) -> SyncResult:
+    """Sync ALLE Plesk-servers van deze org. Loopt door plesk_servers
+    tabel en pollt elke ingeschakelde server. Faalt 1 server, dan
+    blijft de rest doorgaan (errors verzameld per server)."""
     row = await _get_integration(db, PLESK_KIND)
-    if row is None or not row.is_enabled or not (row.config_json or {}).get("api_key"):
-        raise HTTPException(status_code=400, detail="Plesk niet ingesteld/ingeschakeld.")
-    try:
-        async with PleskClient(_plesk_creds(row)) as c:
-            counters = await poll_plesk_for_org(db, org_id=auth.org_id, client=c)
-        row.last_sync_at = datetime.now(UTC)
-        row.last_sync_status = "ok"
-        row.last_sync_message = (
-            f"{counters['subscriptions_seen']} subscriptions, "
-            f"{counters['domains_seen']} domains, "
-            f"{counters['state_events']} state-changes."
-        )
-        await db.flush()
+    if row is None or not row.is_enabled:
+        raise HTTPException(status_code=400, detail="Plesk integratie niet ingeschakeld.")
+
+    from salespilot.models.hosting import PleskServer
+    servers = (await db.execute(
+        select(PleskServer).where(PleskServer.is_enabled.is_(True))
+    )).scalars().all()
+
+    if not servers:
         return SyncResult(
-            ok=True, detail=row.last_sync_message,
-            fetched=counters["subscriptions_seen"] + counters["domains_seen"],
-            created=counters["subscriptions_new"] + counters["domains_new"],
-            updated=counters["subscriptions_seen"] - counters["subscriptions_new"],
+            ok=False,
+            detail="Geen Plesk-servers geconfigureerd. Voeg minimaal 1 server toe via /settings/integrations/plesk/servers.",
         )
-    except PleskError as e:
-        row.last_sync_at = datetime.now(UTC)
+
+    total_subs = 0
+    total_new = 0
+    errors: list[str] = []
+    for s in servers:
+        if not s.api_key:
+            errors.append(f"{s.name}: API key ontbreekt -- overgeslagen")
+            continue
+        creds = PleskCredentials(
+            api_key=s.api_key, base_url=s.base_url, verify_tls=s.verify_tls,
+        )
+        try:
+            async with PleskClient(creds) as c:
+                counters = await poll_plesk_for_org(
+                    db, org_id=auth.org_id, client=c, server_id=s.id,
+                )
+            total_subs += counters["subscriptions_seen"]
+            total_new += counters["subscriptions_new"]
+            s.last_sync_at = datetime.now(UTC)
+            s.last_sync_status = "ok"
+            s.last_sync_message = (
+                f"{counters['subscriptions_seen']} subs, "
+                f"{counters['domains_seen']} domains, "
+                f"{counters['state_events']} state-changes"
+            )
+        except PleskError as e:
+            s.last_sync_at = datetime.now(UTC)
+            s.last_sync_status = "error"
+            s.last_sync_message = str(e)[:500]
+            errors.append(f"{s.name}: {str(e)[:100]}")
+
+    # Overall integration-row bijwerken
+    row.last_sync_at = datetime.now(UTC)
+    if errors and total_subs == 0:
         row.last_sync_status = "error"
-        row.last_sync_message = str(e)[:500]
-        await db.flush()
-        return SyncResult(ok=False, detail=str(e))
+    elif errors:
+        row.last_sync_status = "partial"
+    else:
+        row.last_sync_status = "ok"
+    row.last_sync_message = (
+        f"{len(servers)} servers, {total_subs} subscriptions ({total_new} nieuw)"
+        + (f" -- {len(errors)} fouten" if errors else "")
+    )
+    await db.flush()
+    return SyncResult(
+        ok=not errors or total_subs > 0,
+        detail=row.last_sync_message + ("\n" + "\n".join(errors) if errors else ""),
+        fetched=total_subs, created=total_new, updated=total_subs - total_new,
+    )
 
 
 # ----------------------------------------------------------------------

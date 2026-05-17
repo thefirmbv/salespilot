@@ -150,23 +150,34 @@ function DomainsTab({ expiringOnly = false }: { expiringOnly?: boolean }) {
           placeholder="Zoek domein of klant…"
           className="min-w-[260px] rounded-md border border-slate-300 px-2 py-1.5 text-sm flex-1" />
         {!expiringOnly && (
-          <button onClick={() => setShowManual(true)}
-            className="rounded-md bg-brand-500 hover:bg-brand-600 text-white px-3 py-1.5 text-sm">
-            + Handmatig
-          </button>
+          <>
+            <Link to="/openprovider/register"
+              className="rounded-md bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-sm">
+              + Registreer domein
+            </Link>
+            <button onClick={() => setShowManual(true)}
+              className="rounded-md bg-brand-500 hover:bg-brand-600 text-white px-3 py-1.5 text-sm">
+              + Handmatig
+            </button>
+            <Link to="/openprovider/audit"
+              className="rounded-md bg-slate-100 hover:bg-slate-200 px-3 py-1.5 text-sm">
+              Audit log
+            </Link>
+          </>
         )}
       </div>
 
       {showManual && <ManualForm onClose={() => { setShowManual(false); qc.invalidateQueries({ queryKey: ["/openprovider/domains"] }); }} />}
 
       <div className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
-        <div className="grid grid-cols-[1.4fr_120px_120px_1fr_100px_80px] gap-3 border-b border-slate-200 px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500">
+        <div className="grid grid-cols-[1.4fr_110px_100px_1fr_90px_70px_90px] gap-3 border-b border-slate-200 px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500">
           <div>Domein</div>
           <div>Vervalt</div>
           <div>Auto-renew</div>
           <div>Klant</div>
           <div className="text-right">HaloPSA</div>
           <div className="text-right">Status</div>
+          <div className="text-right">Acties</div>
         </div>
         {rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">
@@ -177,7 +188,7 @@ function DomainsTab({ expiringOnly = false }: { expiringOnly?: boolean }) {
           const urgent = days !== null && days <= 30;
           const warn = days !== null && days <= 90;
           return (
-            <div key={d.id} className="grid grid-cols-[1.4fr_120px_120px_1fr_100px_80px] items-center gap-3 border-b border-slate-100 px-4 py-2 text-sm hover:bg-slate-50">
+            <div key={d.id} className="grid grid-cols-[1.4fr_110px_100px_1fr_90px_70px_90px] items-center gap-3 border-b border-slate-100 px-4 py-2 text-sm hover:bg-slate-50">
               <div className="flex items-center gap-2 min-w-0">
                 <span className={`inline-block w-2 h-2 rounded-full ${d.status === "active" ? "bg-emerald-500" : "bg-rose-500"}`} />
                 <span className="truncate font-medium">{d.name}</span>
@@ -202,10 +213,71 @@ function DomainsTab({ expiringOnly = false }: { expiringOnly?: boolean }) {
                   d.status === "active" ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"
                 }`}>{d.status}</span>
               </div>
+              <div className="text-right">
+                <DomainActions domain={d} />
+              </div>
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function DomainActions({ domain }: { domain: DomainRow }) {
+  const qc = useQueryClient();
+  const isLive = !domain.op_id.startsWith("manual:") && !domain.op_id.startsWith("pending:");
+
+  const renewMut = useMutation({
+    mutationFn: () =>
+      api(`/openprovider/domains/${domain.id}/autorenew`, {
+        method: "PUT",
+        body: JSON.stringify({ auto_renew: !domain.auto_renew }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/openprovider/domains"] }),
+    onError: (e: Error) => alert(e.message),
+  });
+
+  const cancelMut = useMutation({
+    mutationFn: () =>
+      api(`/openprovider/domains/${domain.id}/cancel?confirm=true&confirm_irreversible=true`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/openprovider/domains"] }),
+    onError: (e: Error) => alert(e.message),
+  });
+
+  if (!isLive) {
+    return <span className="text-[10px] text-slate-400">handmatig</span>;
+  }
+
+  return (
+    <div className="flex gap-1 justify-end">
+      <button
+        onClick={() => {
+          if (confirm(`Auto-renew ${domain.auto_renew ? "UITZETTEN" : "AANZETTEN"} voor ${domain.name}?\n\n${domain.auto_renew ? "Domein vervalt op vervaldatum als renewal niet handmatig wordt gedaan." : "Domein verlengt automatisch bij vervaldatum."}`)) {
+            renewMut.mutate();
+          }
+        }}
+        disabled={renewMut.isPending}
+        className="rounded bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 text-[10px] disabled:opacity-50"
+        title={domain.auto_renew ? "Auto-renew uitzetten (zachte opzegging)" : "Auto-renew weer aanzetten"}
+      >
+        {domain.auto_renew ? "Renew uit" : "Renew aan"}
+      </button>
+      <button
+        onClick={() => {
+          const c1 = confirm(`HARD CANCEL ${domain.name}?\n\nDit werkt alleen binnen Openprovider grace-period (~5 dagen na registratie) en is NIET reversible.`);
+          if (!c1) return;
+          const c2 = confirm("ZEKER WETEN? Deze actie kan niet ongedaan worden.");
+          if (c2) cancelMut.mutate();
+        }}
+        disabled={cancelMut.isPending}
+        className="rounded bg-rose-100 hover:bg-rose-200 px-1.5 py-0.5 text-[10px] text-rose-700 disabled:opacity-50"
+        title="Hard cancel binnen grace-period"
+      >
+        ✗
+      </button>
     </div>
   );
 }

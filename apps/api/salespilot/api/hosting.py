@@ -606,3 +606,500 @@ async def delete_op_domain(
     await db.delete(dom)
     await db.flush()
     return {"ok": True}
+
+
+# ======================================================================
+# Plesk servers (multi-server beheer)
+# ======================================================================
+# Jasper draait 4-5 Plesk-servers. Elke server heeft eigen URL + API
+# key. Subscriptions worden gekoppeld aan een server bij polling.
+
+from salespilot.access import require_groups
+from salespilot.models.hosting import PleskServer
+
+
+class PleskServerRow(BaseModel):
+    id: UUID
+    name: str
+    base_url: str
+    verify_tls: bool
+    is_enabled: bool
+    has_api_key: bool
+    last_sync_at: datetime | None
+    last_sync_status: str | None
+    last_sync_message: str | None
+    notes: str | None
+    subscriptions_count: int
+
+
+@plesk_router.get("/servers", response_model=list[PleskServerRow])
+async def list_plesk_servers(auth: CurrentAuth, db: Db) -> list[PleskServerRow]:
+    servers = (await db.execute(
+        select(PleskServer).order_by(PleskServer.name)
+    )).scalars().all()
+    # Counts per server
+    counts = dict((await db.execute(
+        select(PleskSubscription.server_id, func.count(PleskSubscription.id))
+        .group_by(PleskSubscription.server_id)
+    )).all())
+    return [
+        PleskServerRow(
+            id=s.id, name=s.name, base_url=s.base_url,
+            verify_tls=s.verify_tls, is_enabled=s.is_enabled,
+            has_api_key=bool(s.api_key),
+            last_sync_at=s.last_sync_at,
+            last_sync_status=s.last_sync_status,
+            last_sync_message=s.last_sync_message,
+            notes=s.notes,
+            subscriptions_count=int(counts.get(s.id, 0) or 0),
+        )
+        for s in servers
+    ]
+
+
+class CreateServerBody(BaseModel):
+    name: str
+    base_url: str
+    api_key: str
+    verify_tls: bool = True
+    is_enabled: bool = True
+    notes: str | None = None
+
+
+@plesk_router.post("/servers", response_model=PleskServerRow)
+async def create_plesk_server(
+    body: CreateServerBody, auth: CurrentAuth, db: Db,
+) -> PleskServerRow:
+    require_groups("administrators")(auth)
+    # Unique name binnen org
+    existing = (await db.execute(
+        select(PleskServer).where(PleskServer.name == body.name)
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Server '{body.name}' bestaat al.")
+    s = PleskServer(
+        id=uuid4(), org_id=auth.org_id,
+        name=body.name, base_url=body.base_url, api_key=body.api_key,
+        verify_tls=body.verify_tls, is_enabled=body.is_enabled,
+        notes=body.notes,
+    )
+    db.add(s)
+    await db.flush()
+    return PleskServerRow(
+        id=s.id, name=s.name, base_url=s.base_url,
+        verify_tls=s.verify_tls, is_enabled=s.is_enabled,
+        has_api_key=bool(s.api_key),
+        last_sync_at=None, last_sync_status=None, last_sync_message=None,
+        notes=s.notes, subscriptions_count=0,
+    )
+
+
+class UpdateServerBody(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    verify_tls: bool | None = None
+    is_enabled: bool | None = None
+    notes: str | None = None
+
+
+@plesk_router.put("/servers/{server_id}", response_model=PleskServerRow)
+async def update_plesk_server(
+    server_id: UUID, body: UpdateServerBody, auth: CurrentAuth, db: Db,
+) -> PleskServerRow:
+    require_groups("administrators")(auth)
+    s = (await db.execute(
+        select(PleskServer).where(PleskServer.id == server_id)
+    )).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail="Server niet gevonden")
+    if body.name is not None: s.name = body.name
+    if body.base_url is not None: s.base_url = body.base_url
+    if body.api_key:  # leeg = behoud bestaande
+        s.api_key = body.api_key
+    if body.verify_tls is not None: s.verify_tls = body.verify_tls
+    if body.is_enabled is not None: s.is_enabled = body.is_enabled
+    if body.notes is not None: s.notes = body.notes
+    await db.flush()
+    count = (await db.execute(
+        select(func.count(PleskSubscription.id))
+        .where(PleskSubscription.server_id == s.id)
+    )).scalar() or 0
+    return PleskServerRow(
+        id=s.id, name=s.name, base_url=s.base_url,
+        verify_tls=s.verify_tls, is_enabled=s.is_enabled,
+        has_api_key=bool(s.api_key),
+        last_sync_at=s.last_sync_at,
+        last_sync_status=s.last_sync_status,
+        last_sync_message=s.last_sync_message,
+        notes=s.notes, subscriptions_count=int(count),
+    )
+
+
+@plesk_router.delete("/servers/{server_id}")
+async def delete_plesk_server(
+    server_id: UUID, auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    require_groups("administrators")(auth)
+    s = (await db.execute(
+        select(PleskServer).where(PleskServer.id == server_id)
+    )).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail="Server niet gevonden")
+    count = (await db.execute(
+        select(func.count(PleskSubscription.id))
+        .where(PleskSubscription.server_id == s.id)
+    )).scalar() or 0
+    if count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Kan server niet verwijderen: er zijn nog {count} subscriptions aan gekoppeld. Verwijder eerst de subscriptions of zet ze over naar een andere server.",
+        )
+    await db.delete(s)
+    await db.flush()
+    return {"ok": True}
+
+
+@plesk_router.post("/servers/{server_id}/test")
+async def test_plesk_server(
+    server_id: UUID, auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    require_groups("administrators")(auth)
+    from salespilot.integrations.plesk import (
+        PleskClient, PleskCredentials, PleskError,
+    )
+    s = (await db.execute(
+        select(PleskServer).where(PleskServer.id == server_id)
+    )).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail="Server niet gevonden")
+    creds = PleskCredentials(
+        api_key=s.api_key, base_url=s.base_url, verify_tls=s.verify_tls,
+    )
+    try:
+        async with PleskClient(creds) as c:
+            r = await c.test_connection()
+        return {
+            "ok": True,
+            "detail": f"Plesk {r['version']} op {r['hostname']}. {r['clients_count']} klanten, {r['subscriptions_count']} subscriptions.",
+        }
+    except PleskError as e:
+        return {"ok": False, "detail": str(e)}
+
+
+# ======================================================================
+# Openprovider WRITE endpoints (kost geld -- admin only + audit-log)
+# ======================================================================
+
+from salespilot.models.hosting import OpenproviderAuditLog
+
+
+async def _op_client_from_db(db) -> "OpenproviderClient":
+    """Bouw een Openprovider client uit de integratie-row."""
+    from salespilot.models.integrations import Integration
+    from salespilot.integrations.openprovider import (
+        OpenproviderClient, OpenproviderCredentials,
+    )
+    row = (await db.execute(
+        select(Integration).where(Integration.kind == "openprovider")
+    )).scalar_one_or_none()
+    if row is None or not row.is_enabled:
+        raise HTTPException(status_code=400, detail="Openprovider niet ingesteld.")
+    cfg = row.config_json or {}
+    if not cfg.get("username") or not cfg.get("password"):
+        raise HTTPException(status_code=400, detail="Credentials ontbreken.")
+    creds = OpenproviderCredentials(
+        username=cfg["username"], password=cfg["password"],
+        base_url=cfg.get("base_url") or "https://api.openprovider.eu",
+        bound_ip=cfg.get("bound_ip"),
+    )
+    return OpenproviderClient(creds)
+
+
+async def _audit(
+    db, *, org_id: UUID, user_id: UUID, action: str,
+    domain_name: str | None = None, domain_id: UUID | None = None,
+    request_payload: dict | None = None, response_payload: dict | None = None,
+    status: str = "ok", error_message: str | None = None,
+) -> None:
+    from datetime import datetime as _dt, timezone as _tz
+    db.add(OpenproviderAuditLog(
+        id=uuid4(), org_id=org_id, user_id=user_id,
+        action=action, domain_name=domain_name, domain_id=domain_id,
+        request_payload=request_payload or {},
+        response_payload=response_payload or {},
+        status=status, error_message=error_message,
+        occurred_at=_dt.now(_tz.utc),
+    ))
+    await db.flush()
+
+
+# ----- Availability check (read, no money, no audit) -----
+
+class CheckBody(BaseModel):
+    name: str
+    extension: str
+
+
+@op_router.post("/domains/check")
+async def check_domain_availability(
+    body: CheckBody, auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    """Check if a domain is available + price for premium domains.
+    No registration happens here."""
+    from salespilot.integrations.openprovider import OpenproviderError
+    require_groups("administrators")(auth)
+    client = await _op_client_from_db(db)
+    try:
+        async with client as c:
+            r = await c.check_availability(body.name, body.extension)
+    except OpenproviderError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return r
+
+
+# ----- Domain registration (MONEY -- admin + audit) -----
+
+class RegisterBody(BaseModel):
+    name: str
+    extension: str
+    period: int = 1
+    owner_handle: str | None = None
+    admin_handle: str | None = None
+    tech_handle: str | None = None
+    billing_handle: str | None = None
+    name_servers: list[str] | None = None
+    auto_renew: bool = True
+    confirm_premium: bool = False
+    company_id: UUID | None = None
+    notes: str | None = None
+
+
+@op_router.post("/domains/register")
+async def register_domain(
+    body: RegisterBody, auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    """Register a new domain at Openprovider. ADMIN ONLY. Logged.
+
+    Safety net: voor premium-domeinen is `confirm_premium=true` vereist.
+    Anders weigeren we de registratie -- bescherming tegen per-ongeluk
+    hoge kosten."""
+    from salespilot.integrations.openprovider import OpenproviderError
+    require_groups("administrators")(auth)
+
+    full = f"{body.name}.{body.extension}"
+    client = await _op_client_from_db(db)
+    request_payload = body.model_dump()
+
+    try:
+        async with client as c:
+            # 1) Availability + premium-check
+            avail = await c.check_availability(body.name, body.extension)
+            if avail.get("status") != "free":
+                detail = f"Niet beschikbaar: status={avail.get('status')}"
+                await _audit(
+                    db, org_id=auth.org_id, user_id=auth.user_id,
+                    action="register", domain_name=full,
+                    request_payload=request_payload, response_payload=avail,
+                    status="error", error_message=detail,
+                )
+                raise HTTPException(status_code=400, detail=detail)
+            if avail.get("premium") and not body.confirm_premium:
+                price = avail.get("price") or {}
+                detail = (
+                    f"Dit is een premium-domein. Bevestig met confirm_premium=true. "
+                    f"Prijs: {price}"
+                )
+                await _audit(
+                    db, org_id=auth.org_id, user_id=auth.user_id,
+                    action="register", domain_name=full,
+                    request_payload=request_payload, response_payload=avail,
+                    status="error", error_message="premium not confirmed",
+                )
+                raise HTTPException(status_code=400, detail=detail)
+
+            # 2) Echte registratie
+            r = await c.register_domain(
+                name=body.name, extension=body.extension,
+                period=body.period,
+                owner_handle=body.owner_handle,
+                admin_handle=body.admin_handle,
+                tech_handle=body.tech_handle,
+                billing_handle=body.billing_handle,
+                name_servers=body.name_servers,
+                auto_renew=body.auto_renew,
+            )
+    except HTTPException:
+        raise
+    except OpenproviderError as e:
+        await _audit(
+            db, org_id=auth.org_id, user_id=auth.user_id,
+            action="register", domain_name=full,
+            request_payload=request_payload, response_payload={},
+            status="error", error_message=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=str(e))
+
+    # 3) Domain row in DB aanmaken zodat hij meteen zichtbaar is
+    op_id = str(r.get("id") or "")
+    dom = OpenproviderDomain(
+        id=uuid4(), org_id=auth.org_id, op_id=op_id or f"pending:{uuid4()}",
+        name=full, extension=body.extension, status="active",
+        auto_renew=body.auto_renew,
+        registered_at=datetime.now(UTC),
+        nameservers=body.name_servers or [], raw=r,
+    )
+    db.add(dom)
+    await db.flush()
+
+    if body.company_id:
+        db.add(OpenproviderCompanyLink(
+            id=uuid4(), org_id=auth.org_id,
+            domain_id=dom.id, company_id=body.company_id,
+            notes=body.notes,
+        ))
+        await db.flush()
+
+    await _audit(
+        db, org_id=auth.org_id, user_id=auth.user_id,
+        action="register", domain_name=full, domain_id=dom.id,
+        request_payload=request_payload, response_payload=r,
+        status="ok",
+    )
+    return {"ok": True, "domain": full, "openprovider_id": op_id, "domain_id": str(dom.id)}
+
+
+# ----- Auto-renew toggle (zachte opzegging, omkeerbaar) -----
+
+class AutoRenewBody(BaseModel):
+    auto_renew: bool
+
+
+@op_router.put("/domains/{domain_id}/autorenew")
+async def update_autorenew(
+    domain_id: UUID, body: AutoRenewBody, auth: CurrentAuth, db: Db,
+) -> dict[str, Any]:
+    from salespilot.integrations.openprovider import OpenproviderError
+    require_groups("administrators")(auth)
+    dom = (await db.execute(
+        select(OpenproviderDomain).where(OpenproviderDomain.id == domain_id)
+    )).scalar_one_or_none()
+    if dom is None:
+        raise HTTPException(status_code=404, detail="Domein niet gevonden")
+    if dom.op_id.startswith("manual:") or dom.op_id.startswith("pending:"):
+        raise HTTPException(
+            status_code=400,
+            detail="Dit domein staat niet in Openprovider (handmatig of pending). Auto-renew kan alleen voor live domeinen.",
+        )
+
+    client = await _op_client_from_db(db)
+    action = "auto_renew_on" if body.auto_renew else "auto_renew_off"
+    try:
+        async with client as c:
+            r = await c.update_autorenew(int(dom.op_id), body.auto_renew)
+    except OpenproviderError as e:
+        await _audit(
+            db, org_id=auth.org_id, user_id=auth.user_id,
+            action=action, domain_name=dom.name, domain_id=dom.id,
+            request_payload={"auto_renew": body.auto_renew}, response_payload={},
+            status="error", error_message=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=str(e))
+    dom.auto_renew = body.auto_renew
+    await db.flush()
+    await _audit(
+        db, org_id=auth.org_id, user_id=auth.user_id,
+        action=action, domain_name=dom.name, domain_id=dom.id,
+        request_payload={"auto_renew": body.auto_renew},
+        response_payload=r or {}, status="ok",
+    )
+    return {"ok": True, "auto_renew": body.auto_renew}
+
+
+# ----- Hard cancel (binnen grace, NIET reversible) -----
+
+@op_router.delete("/domains/{domain_id}/cancel")
+async def cancel_domain_registration(
+    domain_id: UUID, auth: CurrentAuth, db: Db,
+    confirm: bool = Query(False, description="Must be true"),
+    confirm_irreversible: bool = Query(False, description="Must be true"),
+) -> dict[str, Any]:
+    """Harde cancel binnen grace-period (~5 dagen na registratie).
+    Dubbele confirm vereist. NIET reversible.
+
+    Voor reguliere opzegging buiten grace: gebruik PUT autorenew=false
+    en laat het domein gewoon expireren."""
+    from salespilot.integrations.openprovider import OpenproviderError
+    require_groups("administrators")(auth)
+    if not (confirm and confirm_irreversible):
+        raise HTTPException(
+            status_code=400,
+            detail="Beide confirm=true en confirm_irreversible=true vereist. Deze actie kan NIET ongedaan worden.",
+        )
+    dom = (await db.execute(
+        select(OpenproviderDomain).where(OpenproviderDomain.id == domain_id)
+    )).scalar_one_or_none()
+    if dom is None:
+        raise HTTPException(status_code=404, detail="Domein niet gevonden")
+    if dom.op_id.startswith("manual:") or dom.op_id.startswith("pending:"):
+        raise HTTPException(status_code=400, detail="Niet een live Openprovider-domein.")
+
+    client = await _op_client_from_db(db)
+    try:
+        async with client as c:
+            r = await c.cancel_domain(int(dom.op_id))
+    except OpenproviderError as e:
+        await _audit(
+            db, org_id=auth.org_id, user_id=auth.user_id,
+            action="cancel", domain_name=dom.name, domain_id=dom.id,
+            request_payload={"confirm": True}, response_payload={},
+            status="error", error_message=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=str(e))
+    dom.status = "cancelled"
+    await db.flush()
+    await _audit(
+        db, org_id=auth.org_id, user_id=auth.user_id,
+        action="cancel", domain_name=dom.name, domain_id=dom.id,
+        request_payload={"confirm": True}, response_payload=r or {}, status="ok",
+    )
+    return {"ok": True, "cancelled": dom.name}
+
+
+# ----- Audit log viewer -----
+
+class AuditLogRow(BaseModel):
+    id: UUID
+    user_id: UUID | None
+    user_email: str | None = None
+    action: str
+    domain_name: str | None
+    domain_id: UUID | None
+    status: str
+    error_message: str | None
+    occurred_at: datetime
+
+
+@op_router.get("/audit-log", response_model=list[AuditLogRow])
+async def list_audit_log(
+    auth: CurrentAuth, db: Db,
+    limit: int = Query(100, ge=1, le=500),
+) -> list[AuditLogRow]:
+    require_groups("administrators")(auth)
+    from salespilot.models.auth import User
+    rows = (await db.execute(
+        select(OpenproviderAuditLog, User)
+        .outerjoin(User, User.id == OpenproviderAuditLog.user_id)
+        .order_by(desc(OpenproviderAuditLog.occurred_at))
+        .limit(limit)
+    )).all()
+    return [
+        AuditLogRow(
+            id=a.id, user_id=a.user_id,
+            user_email=u.email if u else None,
+            action=a.action, domain_name=a.domain_name,
+            domain_id=a.domain_id, status=a.status,
+            error_message=a.error_message, occurred_at=a.occurred_at,
+        )
+        for a, u in rows
+    ]

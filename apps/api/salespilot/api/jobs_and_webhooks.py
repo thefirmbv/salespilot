@@ -935,3 +935,167 @@ async def unifi_tick(
             await db.commit()
 
     return {"ok": True, "polled": len(results), "results": results}
+
+
+# ----------------------------------------------------------------------
+# Plesk poller tick (cron: */5 * * * *)
+# ----------------------------------------------------------------------
+
+
+@internal_router.post("/plesk/tick")
+async def plesk_tick(
+    x_internal_token: str = Header(default=""),
+) -> dict[str, Any]:
+    """Poll alle Plesk-servers voor elke org met integratie ingeschakeld.
+
+    Default schedule: elke 5 minuten. Honors per-org poll_interval.
+    Looped through plesk_servers tabel; faalt 1 server, andere gaan door.
+    """
+    settings = get_settings()
+    expected = settings.autopilot_internal_token.get_secret_value()
+    if not expected or x_internal_token != expected:
+        raise HTTPException(status_code=401, detail="bad internal token")
+
+    from salespilot.integrations.plesk import (
+        PleskClient, PleskCredentials, PleskError,
+    )
+    from salespilot.integrations.plesk_poller import poll_plesk_for_org
+    from salespilot.models.hosting import PleskServer
+
+    polled_at = datetime.now(UTC)
+    results: list[dict[str, Any]] = []
+
+    async with get_sessionmaker()() as db:
+        orgs = (await db.execute(select(Organization))).scalars().all()
+
+    for org in orgs:
+        async with get_sessionmaker()() as db:
+            await _set_org_context(db, org.id)
+            row = (await db.execute(
+                select(Integration).where(
+                    Integration.org_id == org.id,
+                    Integration.kind == "plesk",
+                )
+            )).scalar_one_or_none()
+            if row is None or not row.is_enabled:
+                continue
+            cfg = row.config_json or {}
+            interval = int(cfg.get("poll_interval_seconds") or 300)
+            if row.last_sync_at and (polled_at - row.last_sync_at).total_seconds() < interval - 5:
+                continue
+
+            servers = (await db.execute(
+                select(PleskServer).where(PleskServer.is_enabled.is_(True))
+            )).scalars().all()
+            if not servers:
+                continue
+
+            org_subs = 0
+            org_errors = 0
+            for s in servers:
+                if not s.api_key:
+                    continue
+                try:
+                    creds = PleskCredentials(
+                        api_key=s.api_key, base_url=s.base_url,
+                        verify_tls=s.verify_tls,
+                    )
+                    async with PleskClient(creds) as client:
+                        counters = await poll_plesk_for_org(
+                            db, org_id=org.id, client=client, server_id=s.id,
+                        )
+                    org_subs += counters["subscriptions_seen"]
+                    s.last_sync_at = polled_at
+                    s.last_sync_status = "ok"
+                    s.last_sync_message = (
+                        f"{counters['subscriptions_seen']} subs, "
+                        f"{counters['domains_seen']} domains"
+                    )
+                except PleskError as e:
+                    org_errors += 1
+                    s.last_sync_at = polled_at
+                    s.last_sync_status = "error"
+                    s.last_sync_message = str(e)[:500]
+
+            row.last_sync_at = polled_at
+            row.last_sync_status = "ok" if org_errors == 0 else ("partial" if org_subs > 0 else "error")
+            row.last_sync_message = f"{len(servers)} servers, {org_subs} subscriptions"
+            await db.commit()
+
+            results.append({
+                "org": str(org.id), "servers": len(servers),
+                "subscriptions": org_subs, "errors": org_errors,
+            })
+
+    return {"ok": True, "orgs_polled": len(results), "results": results}
+
+
+# ----------------------------------------------------------------------
+# Openprovider poller tick (cron: 0 */1 * * *)
+# ----------------------------------------------------------------------
+
+
+@internal_router.post("/openprovider/tick")
+async def openprovider_tick(
+    x_internal_token: str = Header(default=""),
+) -> dict[str, Any]:
+    """Poll Openprovider domeinen voor elke org met integratie aan.
+    Default schedule: elk uur (domeinen wijzigen niet vaak)."""
+    settings = get_settings()
+    expected = settings.autopilot_internal_token.get_secret_value()
+    if not expected or x_internal_token != expected:
+        raise HTTPException(status_code=401, detail="bad internal token")
+
+    from salespilot.integrations.openprovider import (
+        OpenproviderClient, OpenproviderCredentials, OpenproviderError,
+    )
+    from salespilot.integrations.openprovider_poller import (
+        poll_openprovider_for_org,
+    )
+
+    polled_at = datetime.now(UTC)
+    results: list[dict[str, Any]] = []
+
+    async with get_sessionmaker()() as db:
+        orgs = (await db.execute(select(Organization))).scalars().all()
+
+    for org in orgs:
+        async with get_sessionmaker()() as db:
+            await _set_org_context(db, org.id)
+            row = (await db.execute(
+                select(Integration).where(
+                    Integration.org_id == org.id,
+                    Integration.kind == "openprovider",
+                )
+            )).scalar_one_or_none()
+            if row is None or not row.is_enabled:
+                continue
+            cfg = row.config_json or {}
+            if not cfg.get("username") or not cfg.get("password"):
+                continue
+            interval = int(cfg.get("poll_interval_seconds") or 3600)
+            if row.last_sync_at and (polled_at - row.last_sync_at).total_seconds() < interval - 30:
+                continue
+
+            try:
+                creds = OpenproviderCredentials(
+                    username=cfg["username"], password=cfg["password"],
+                    base_url=cfg.get("base_url") or "https://api.openprovider.eu",
+                    bound_ip=cfg.get("bound_ip"),
+                )
+                async with OpenproviderClient(creds) as client:
+                    counters = await poll_openprovider_for_org(
+                        db, org_id=org.id, client=client,
+                    )
+                row.last_sync_at = polled_at
+                row.last_sync_status = "ok"
+                row.last_sync_message = f"{counters['domains_seen']} domains ({counters['domains_new']} nieuw)"
+                results.append({"org": str(org.id), "domains": counters["domains_seen"]})
+            except OpenproviderError as e:
+                row.last_sync_at = polled_at
+                row.last_sync_status = "error"
+                row.last_sync_message = str(e)[:500]
+                results.append({"org": str(org.id), "error": str(e)[:100]})
+            await db.commit()
+
+    return {"ok": True, "orgs_polled": len(results), "results": results}

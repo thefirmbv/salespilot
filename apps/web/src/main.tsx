@@ -29,6 +29,9 @@ import { AccessSettings } from "./pages/AccessSettings";
 import { Tech } from "./pages/Tech";
 import { Plesk } from "./pages/Plesk";
 import { Openprovider } from "./pages/Openprovider";
+import { OpenproviderRegister } from "./pages/OpenproviderRegister";
+import { OpenproviderAudit } from "./pages/OpenproviderAudit";
+import { PleskServers } from "./pages/PleskServers";
 import { Calendar } from "./pages/Calendar";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { SocialPosts, SocialPostEditor } from "./pages/SocialPosts";
@@ -88,6 +91,9 @@ createRoot(root).render(
               <Route path="/tech" element={<Tech />} />
               <Route path="/plesk" element={<Plesk />} />
               <Route path="/openprovider" element={<Openprovider />} />
+              <Route path="/openprovider/register" element={<OpenproviderRegister />} />
+              <Route path="/openprovider/audit" element={<OpenproviderAudit />} />
+              <Route path="/settings/integrations/plesk/servers" element={<PleskServers />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/social" element={<SocialPosts />} />
               <Route path="/social/new" element={<SocialPostEditor />} />
