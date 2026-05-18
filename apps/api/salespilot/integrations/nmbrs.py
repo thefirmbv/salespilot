@@ -1,19 +1,36 @@
-"""NMBRS REST API client met OAuth 2.0 + subscription-key auth.
+"""NMBRS REST API client met OAuth 2.0 + multi-debtor support.
 
-Twee headers verplicht op iedere call:
-  Authorization: Bearer <access_token>     (van /connect/token)
-  X-Subscription-Key: <subscription_key>   (uit developer portal)
+NMBRS authoriseert per debtor. Eén gebruiker kan toegang hebben tot
+meerdere debtors (= environments) met dezelfde NMBRS-login. Voorbeeld:
+  - IT-gemak B.V.       (debtorId cb5f8acf-...)
+  - The Firm ISP B.V.   (debtorId X)
 
-OAuth flow:
-  1. User redirect naar /connect/authorize met client_id + redirect_uri + scope
-  2. NMBRS toont consent-scherm, redirect terug met code
-  3. We exchangen code voor access_token + refresh_token
-  4. access_token: 1 uur geldig
-  5. refresh_token: 30 dagen, eenmalig gebruik (= elke refresh geeft nieuw refresh-token)
+Bij elke OAuth-consent geef je consent voor ÉÉN debtor. Wij bewaren
+daarom een aparte token-set per debtor in config_json:
 
-We bewaren tokens in integration.config_json:
-  - access_token, access_token_expires_at
-  - refresh_token, refresh_token_expires_at
+  config_json = {
+    "client_id": "...", "client_secret": "...",
+    "subscription_key": "...", "redirect_uri": "...",
+    "debtors": {
+      "<debtor_uuid>": {
+        "name": "IT-gemak B.V.",
+        "access_token": "...",
+        "access_token_expires_at": "...",
+        "refresh_token": "...",
+        "refresh_token_expires_at": "...",
+        "granted_scopes": [...],
+        "last_token_refresh_at": "...",
+      },
+      "<other_debtor_uuid>": { ... }
+    }
+  }
+
+Backward compat: bij gebruik van oude top-level tokens worden ze
+gemigreerd naar `debtors` dict bij eerste call.
+
+Voor de API:
+  Authorization: Bearer <access_token>
+  X-Subscription-Key: <subscription_key>
 """
 
 from __future__ import annotations
@@ -33,18 +50,12 @@ from salespilot.models.integrations import Integration
 IDENTITY_BASE = "https://identityservice.nmbrs.com"
 API_BASE = "https://api.nmbrsapp.com"
 
-# Default scopes -- gevalideerd tegen developer.nmbrs.com/docs/auth/scopes
-# Bestaande scopes alleen (anders -> invalid_scope error op consent).
 DEFAULT_SCOPES = [
-    "offline_access",                 # MANDATORY voor refresh_token
-    "employee.info.read",             # naam + email medewerkers
-    "employee.employment.read",       # contract + rooster (verlof zit hier mogelijk in)
-    "company.info.read",              # bedrijfsstructuur
+    "offline_access",
+    "employee.info.read",
+    "employee.employment.read",
+    "company.info.read",
 ]
-# Niet bestaande / verwijderd:
-#   - openid                  : niet in NMBRS scope-lijst
-#   - employee.absence.read   : bestaat niet; verlof via employment of apart endpoint
-#   - user.info               : niet in scope-lijst (komt mogelijk gratis bij offline_access)
 
 
 class NmbrsConfigError(Exception):
@@ -63,9 +74,82 @@ def _get_cfg(integ: Integration) -> dict:
     return cfg
 
 
+# ---- Debtor-token persistence -------------------------------------
+
+
+def _migrate_legacy_tokens(integ: Integration) -> None:
+    """Verplaats top-level tokens naar debtors[<unknown>] bij oude config.
+
+    Voor de eerste keer dat we multi-debtor draaien: oude single-token
+    layout heeft access_token/refresh_token op root. We bewaren ze
+    onder een speciale __legacy__ key zodat ze niet onbruikbaar zijn
+    maar evenmin botsen met echte debtor-ids.
+    """
+    cfg = integ.config_json or {}
+    if cfg.get("access_token") and "debtors" not in cfg:
+        new_cfg = dict(cfg)
+        new_cfg["debtors"] = {
+            "__legacy__": {
+                "name": "Onbekende debtor (legacy token)",
+                "access_token": cfg.get("access_token"),
+                "access_token_expires_at": cfg.get("access_token_expires_at"),
+                "refresh_token": cfg.get("refresh_token"),
+                "refresh_token_expires_at": cfg.get("refresh_token_expires_at"),
+                "granted_scopes": cfg.get("granted_scopes", []),
+                "last_token_refresh_at": cfg.get("last_token_refresh_at"),
+            }
+        }
+        # Verwijder oude top-level token-velden om verwarring te voorkomen
+        for k in (
+            "access_token", "access_token_expires_at",
+            "refresh_token", "refresh_token_expires_at",
+            "granted_scopes", "last_token_refresh_at",
+        ):
+            new_cfg.pop(k, None)
+        integ.config_json = new_cfg
+
+
+def get_debtors(integ: Integration) -> dict[str, dict]:
+    """Returnt dict[debtor_id -> token-info]. Migreert legacy."""
+    _migrate_legacy_tokens(integ)
+    return (integ.config_json or {}).get("debtors", {})
+
+
+def store_debtor_tokens(
+    integ: Integration,
+    debtor_id: str,
+    debtor_name: str,
+    token_response: dict,
+) -> None:
+    """Sla tokens voor één debtor op. Overschrijft bestaande tokens
+    voor dezelfde debtor maar laat andere debtors met rust."""
+    cfg = dict(integ.config_json or {})
+    debtors = dict(cfg.get("debtors") or {})
+    now = datetime.now(UTC)
+
+    debtors[debtor_id] = {
+        "name": debtor_name,
+        "access_token": token_response["access_token"],
+        "access_token_expires_at": (
+            now + timedelta(seconds=int(token_response.get("expires_in", 3600)))
+        ).isoformat(),
+        "refresh_token": token_response.get("refresh_token"),
+        "refresh_token_expires_at": (
+            now + timedelta(days=30)
+        ).isoformat() if token_response.get("refresh_token") else None,
+        "granted_scopes": token_response.get("scope", "").split(),
+        "last_token_refresh_at": now.isoformat(),
+    }
+    cfg["debtors"] = debtors
+    cfg["status"] = "connected"
+    integ.config_json = cfg
+
+
+# ---- OAuth flow ----------------------------------------------------
+
+
 def build_authorize_url(integ: Integration, state: str,
                         scopes: list[str] | None = None) -> str:
-    """Bouw de URL waar de gebruiker naartoe gestuurd wordt voor consent."""
     cfg = _get_cfg(integ)
     params = {
         "client_id": cfg["client_id"],
@@ -80,7 +164,6 @@ def build_authorize_url(integ: Integration, state: str,
 async def exchange_code_for_tokens(
     integ: Integration, code: str,
 ) -> dict[str, Any]:
-    """Wissel authorization code in voor access + refresh token."""
     cfg = _get_cfg(integ)
     basic = base64.b64encode(
         f"{cfg['client_id']}:{cfg['client_secret']}".encode()
@@ -104,12 +187,16 @@ async def exchange_code_for_tokens(
     return r.json()
 
 
-async def refresh_access_token(integ: Integration) -> dict[str, Any]:
-    """Gebruik refresh_token om nieuwe access_token + refresh_token te krijgen."""
+async def refresh_access_token(
+    integ: Integration, debtor_id: str,
+) -> dict[str, Any]:
     cfg = _get_cfg(integ)
-    refresh = cfg.get("refresh_token")
-    if not refresh:
-        raise NmbrsAuthError("No refresh_token available -- user must re-consent")
+    debtors = get_debtors(integ)
+    debtor = debtors.get(debtor_id)
+    if not debtor or not debtor.get("refresh_token"):
+        raise NmbrsAuthError(
+            f"No refresh_token for debtor {debtor_id} -- user must re-consent"
+        )
     basic = base64.b64encode(
         f"{cfg['client_id']}:{cfg['client_secret']}".encode()
     ).decode()
@@ -118,7 +205,7 @@ async def refresh_access_token(integ: Integration) -> dict[str, Any]:
             f"{IDENTITY_BASE}/connect/token",
             content=urlencode({
                 "grant_type": "refresh_token",
-                "refresh_token": refresh,
+                "refresh_token": debtor["refresh_token"],
             }),
             headers={
                 "Authorization": f"Basic {basic}",
@@ -130,61 +217,44 @@ async def refresh_access_token(integ: Integration) -> dict[str, Any]:
     return r.json()
 
 
-def store_tokens(integ: Integration, token_response: dict) -> None:
-    """Update integration.config_json met tokens uit response.
-
-    NMBRS retourneert:
-      access_token   (JWT)
-      expires_in     (seconden, typisch 3600)
-      refresh_token  (single-use, 30 dagen)
-      token_type     'Bearer'
-      scope          'space separated'
-    """
-    cfg = dict(integ.config_json or {})
-    now = datetime.now(UTC)
-    cfg["access_token"] = token_response["access_token"]
-    cfg["access_token_expires_at"] = (
-        now + timedelta(seconds=int(token_response.get("expires_in", 3600)))
-    ).isoformat()
-    if "refresh_token" in token_response:
-        cfg["refresh_token"] = token_response["refresh_token"]
-        # Refresh tokens zijn 30 dagen geldig
-        cfg["refresh_token_expires_at"] = (
-            now + timedelta(days=30)
-        ).isoformat()
-    cfg["last_token_refresh_at"] = now.isoformat()
-    cfg["granted_scopes"] = token_response.get("scope", "").split()
-    cfg["status"] = "connected"
-    integ.config_json = cfg
-
-
-async def get_valid_access_token(integ: Integration, db: AsyncSession) -> str:
-    """Returnt geldig access_token. Refresh automatisch als bijna verlopen."""
-    cfg = integ.config_json or {}
-    access = cfg.get("access_token")
-    expires_str = cfg.get("access_token_expires_at")
+async def get_valid_access_token(
+    integ: Integration, debtor_id: str, db: AsyncSession,
+) -> str:
+    """Returns geldig access_token voor één debtor. Refresh automatisch."""
+    debtors = get_debtors(integ)
+    debtor = debtors.get(debtor_id)
+    if not debtor:
+        raise NmbrsAuthError(f"Unknown debtor {debtor_id}")
+    access = debtor.get("access_token")
+    expires_str = debtor.get("access_token_expires_at")
     if access and expires_str:
-        expires = datetime.fromisoformat(expires_str)
-        # Refresh 5 min voor expiry
-        if expires > datetime.now(UTC) + timedelta(minutes=5):
-            return access
-    # Need to refresh
-    new = await refresh_access_token(integ)
-    store_tokens(integ, new)
+        try:
+            expires = datetime.fromisoformat(expires_str)
+            if expires > datetime.now(UTC) + timedelta(minutes=5):
+                return access
+        except (ValueError, TypeError):
+            pass
+    # Refresh
+    new = await refresh_access_token(integ, debtor_id)
+    store_debtor_tokens(integ, debtor_id, debtor.get("name", "Unknown"), new)
     await db.flush()
     return new["access_token"]
 
 
-class NmbrsClient:
-    """Thin wrapper around NMBRS REST API with auto-refresh."""
+# ---- API client ----------------------------------------------------
 
-    def __init__(self, integ: Integration, db: AsyncSession):
+
+class NmbrsClient:
+    """Thin wrapper around NMBRS REST API voor één debtor."""
+
+    def __init__(self, integ: Integration, debtor_id: str, db: AsyncSession):
         self.integ = integ
+        self.debtor_id = debtor_id
         self.db = db
 
     async def _headers(self) -> dict[str, str]:
         cfg = _get_cfg(self.integ)
-        token = await get_valid_access_token(self.integ, self.db)
+        token = await get_valid_access_token(self.integ, self.debtor_id, self.db)
         return {
             "Authorization": f"Bearer {token}",
             "X-Subscription-Key": cfg["subscription_key"],
@@ -199,13 +269,13 @@ class NmbrsClient:
                 params=params,
             )
         if r.status_code == 401:
-            raise NmbrsAuthError(f"Unauthorized: {r.text}")
+            raise NmbrsAuthError(f"401 Unauthorized op {path}: {r.text[:200]}")
+        if r.status_code == 403:
+            raise NmbrsAuthError(f"403 Forbidden op {path} -- scope mist of debtor heeft geen toegang")
         r.raise_for_status()
         return r.json()
 
     async def _paginated(self, path: str, params: dict | None = None) -> list[dict]:
-        """NMBRS REST API wrapt alle list-responses in {pagination, data}.
-        Pagineert automatisch door alle pages heen."""
         results: list[dict] = []
         page = 1
         while True:
@@ -214,7 +284,6 @@ class NmbrsClient:
             p.setdefault("pageSize", 100)
             r = await self.get(path, params=p)
             if not isinstance(r, dict):
-                # Onverwacht: directe lijst zonder envelope
                 if isinstance(r, list):
                     return r
                 return []
@@ -226,18 +295,18 @@ class NmbrsClient:
             page += 1
         return results
 
+    async def debtors(self) -> list[dict]:
+        """Debtors waar deze access_token bij hoort.
+        Verwacht 1 item terug -- NMBRS tokens zijn altijd debtor-scoped."""
+        return await self._paginated("/api/debtors")
+
     async def companies(self) -> list[dict]:
-        """Bedrijven waar deze user toegang toe heeft.
-        Returnt list van dicts met {companyId, number, name, debtorId}."""
         return await self._paginated("/api/companies")
 
     async def employees(self, company_id: str) -> list[dict]:
-        """Medewerkers van een bedrijf -- basic info per employee."""
         return await self._paginated(f"/api/companies/{company_id}/employees")
 
     async def employee_detail(self, employee_id: str) -> dict | None:
-        """Volledig profiel van één medewerker: personalInfo + function +
-        department + manager + address. Returnt None bij 404."""
         try:
             r = await self.get(f"/api/employees/{employee_id}")
         except Exception:
@@ -251,8 +320,6 @@ class NmbrsClient:
     async def employee_absences(
         self, employee_id: str, year: int | None = None,
     ) -> list[dict]:
-        """Verlof voor één medewerker. Mogelijk niet beschikbaar in
-        huidige scope -- returnt [] bij 403/404."""
         try:
             params = {"year": year} if year else None
             return await self._paginated(
@@ -260,3 +327,36 @@ class NmbrsClient:
             )
         except Exception:
             return []
+
+
+# ---- Helper: detecteer debtor van vers verkregen token -------------
+
+
+async def fetch_debtor_for_token(
+    access_token: str, subscription_key: str,
+) -> tuple[str, str] | None:
+    """Met een vers verkregen access_token: haal /api/debtors op
+    en return (debtor_id, debtor_name) van de eerste (en enige) debtor.
+
+    NMBRS REST tokens zijn altijd debtor-scoped, dus debtors-lijst is 1 item.
+    """
+    async with httpx.AsyncClient(timeout=15.0) as c:
+        r = await c.get(
+            f"{API_BASE}/api/debtors",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "X-Subscription-Key": subscription_key,
+                "Accept": "application/json",
+            },
+            params={"pageNumber": 1, "pageSize": 5},
+        )
+    if r.status_code != 200:
+        return None
+    body = r.json()
+    if not isinstance(body, dict):
+        return None
+    data = body.get("data") or []
+    if not data:
+        return None
+    debtor = data[0]
+    return (str(debtor["debtorId"]), debtor.get("name") or "Unknown")

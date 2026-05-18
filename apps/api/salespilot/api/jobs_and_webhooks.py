@@ -1102,7 +1102,7 @@ async def openprovider_tick(
 
 
 # ----------------------------------------------------------------------
-# NMBRS cron tick — uurlijkse sync van medewerkers (auto-discover nieuwe)
+# NMBRS cron tick — uurlijkse multi-debtor sync van medewerkers
 # ----------------------------------------------------------------------
 
 
@@ -1110,16 +1110,18 @@ async def openprovider_tick(
 async def nmbrs_tick(
     x_internal_token: str = Header(default=""),
 ) -> dict[str, Any]:
-    """Sync NMBRS-medewerkers per org. Pickt nieuwe medewerkers
-    automatisch op (upsert by nmbrs_employee_id).
+    """Sync NMBRS-medewerkers per org, per debtor.
 
-    Skip-condities:
-      - geen NMBRS-integration voor de org
+    Multi-debtor: één org kan meerdere NMBRS-debtors gekoppeld hebben
+    (zie integrations/nmbrs.py docstring voor structuur).
+
+    Skip-condities per org:
+      - geen NMBRS-integration
       - integration is_enabled=false
-      - geen refresh_token (user heeft consent niet gegeven)
+      - geen actieve debtors gekoppeld
     """
-    from salespilot.integrations.nmbrs import NmbrsClient, NmbrsAuthError, NmbrsConfigError
-    from salespilot.models.inventory import Employee
+    from salespilot.integrations.nmbrs import get_debtors
+    from salespilot.api.nmbrs import _sync_one_debtor
 
     settings = get_settings()
     expected = settings.autopilot_internal_token.get_secret_value()
@@ -1145,108 +1147,39 @@ async def nmbrs_tick(
             ).scalar_one_or_none()
             if integ is None or not integ.is_enabled:
                 continue
-            cfg = integ.config_json or {}
-            if not cfg.get("refresh_token"):
-                continue  # user heeft nog geen consent gegeven
 
-            client = NmbrsClient(integ, db)
-            created = updated = unchanged = skipped = 0
-
-            try:
-                companies = await client.companies()
-            except (NmbrsAuthError, NmbrsConfigError) as e:
-                integ.last_sync_at = datetime.now(UTC)
-                integ.last_sync_status = "error"
-                integ.last_sync_message = f"companies fetch failed: {str(e)[:160]}"
-                await db.flush()
-                results.append({"org": str(org.id), "error": str(e)[:120]})
+            debtors_dict = get_debtors(integ)
+            debtors_to_sync = {
+                did: d for did, d in debtors_dict.items()
+                if did != "__legacy__" and d.get("refresh_token")
+            }
+            if not debtors_to_sync:
                 continue
 
-            for company in companies:
-                cid = company.get("companyId") or company.get("id")
-                if not cid:
-                    continue
-                cid = str(cid)
-                try:
-                    employees_raw = await client.employees(cid)
-                except Exception:
-                    continue
-                for emp in employees_raw:
-                    nmbrs_emp_id = emp.get("employeeId") or emp.get("id")
-                    if not nmbrs_emp_id:
-                        continue
-                    nmbrs_emp_id = str(nmbrs_emp_id)
-                    basic = emp.get("employeeBasicInfo") or {}
-                    first = (basic.get("firstName") or "").strip()
-                    last = (basic.get("lastName") or "").strip()
-                    prefix = (basic.get("prefix") or "").strip()
-                    email = None
-                    role = None
-                    detail = await client.employee_detail(nmbrs_emp_id)
-                    if detail:
-                        pi = detail.get("personalInfo") or {}
-                        contact = pi.get("contactInfo") or {}
-                        email = (
-                            contact.get("businessEmail") or contact.get("privateEmail") or ""
-                        ).strip().lower() or None
-                        bi = pi.get("basicInfo") or {}
-                        first = (bi.get("firstName") or first or "").strip()
-                        last = (bi.get("lastName") or last or "").strip()
-                        prefix = (bi.get("prefix") or prefix or "").strip()
-                        fn = detail.get("function") or {}
-                        if isinstance(fn, dict):
-                            role = (fn.get("description") or fn.get("name") or "").strip() or None
-
-                    full = " ".join(p for p in [first, prefix, last] if p)
-                    if not full:
-                        skipped += 1
-                        continue
-
-                    existing = (
-                        await db.execute(
-                            select(Employee).where(
-                                Employee.nmbrs_employee_id == nmbrs_emp_id
-                            )
-                        )
-                    ).scalar_one_or_none()
-
-                    now = datetime.now(UTC)
-                    if existing:
-                        changed = False
-                        if existing.full_name != full:
-                            existing.full_name = full; changed = True
-                        if email and existing.email != email:
-                            existing.email = email; changed = True
-                        if existing.nmbrs_company_id != cid:
-                            existing.nmbrs_company_id = cid; changed = True
-                        if role and not existing.role:
-                            existing.role = role; changed = True
-                        if changed:
-                            existing.updated_at = now
-                            updated += 1
-                        else:
-                            unchanged += 1
-                    else:
-                        db.add(Employee(
-                            id=uuid4(), org_id=org.id,
-                            full_name=full, email=email, role=role, status="active",
-                            nmbrs_employee_id=nmbrs_emp_id,
-                            nmbrs_company_id=cid,
-                            created_at=now, updated_at=now,
-                        ))
-                        created += 1
+            org_results = []
+            for did, d in debtors_to_sync.items():
+                r = await _sync_one_debtor(
+                    integ, did, d.get("name", "Unknown"), org.id, db,
+                )
+                org_results.append({
+                    "debtor": r.debtor_name,
+                    "ok": r.ok,
+                    "created": r.employees_created,
+                    "updated": r.employees_updated,
+                    "error": r.error,
+                })
 
             integ.last_sync_at = datetime.now(UTC)
-            integ.last_sync_status = "ok"
-            integ.last_sync_message = (
-                f"cron sync: {created} new, {updated} updated, "
-                f"{unchanged} unchanged, {skipped} skipped"
+            integ.last_sync_status = (
+                "ok" if all(x["ok"] for x in org_results) else "partial"
             )
-            await db.flush()
+            integ.last_sync_message = (
+                f"cron sync over {len(org_results)} debtor(s)"
+            )
+            await db.commit()
             results.append({
                 "org": str(org.id),
-                "created": created, "updated": updated,
-                "unchanged": unchanged, "skipped": skipped,
+                "debtors": org_results,
             })
 
     return {"ok": True, "orgs_synced": len(results), "results": results}

@@ -3,24 +3,41 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 
-type NmbrsStatus = {
-  configured: boolean;
-  connected: boolean;
-  status: string;
+type DebtorStatus = {
+  debtor_id: string;
+  name: string;
   granted_scopes: string[];
   access_token_expires_at: string | null;
   last_token_refresh_at: string | null;
+};
+
+type NmbrsStatus = {
+  configured: boolean;
+  connected: boolean;
+  debtors: DebtorStatus[];
   last_sync_at: string | null;
+};
+
+type DebtorSyncResult = {
+  debtor_id: string;
+  debtor_name: string;
+  ok: boolean;
+  employees_created: number;
+  employees_updated: number;
+  employees_unchanged: number;
+  companies_seen: number;
+  skipped_no_name: number;
+  error: string | null;
 };
 
 type SyncResult = {
   ok: boolean;
-  employees_created?: number;
-  employees_updated?: number;
-  employees_unchanged?: number;
-  companies_seen?: number;
-  skipped_no_email?: number;
-  error?: string;
+  debtors_synced: number;
+  total_created: number;
+  total_updated: number;
+  total_unchanged: number;
+  per_debtor: DebtorSyncResult[];
+  error: string | null;
 };
 
 export function NmbrsSettings() {
@@ -29,15 +46,13 @@ export function NmbrsSettings() {
   const callbackResult = params.get("nmbrs");
   const callbackMsg = params.get("msg");
 
-  // Verwijder query-params na lezen
   useEffect(() => {
     if (callbackResult) {
       const t = setTimeout(() => {
         const p = new URLSearchParams(params);
-        p.delete("nmbrs");
-        p.delete("msg");
+        p.delete("nmbrs"); p.delete("msg");
         setParams(p, { replace: true });
-      }, 8000);
+      }, 12000);
       return () => clearTimeout(t);
     }
   }, [callbackResult, params, setParams]);
@@ -56,7 +71,26 @@ export function NmbrsSettings() {
       qc.invalidateQueries({ queryKey: ["/integrations/nmbrs/status"] });
       qc.invalidateQueries({ queryKey: ["/inventory/employees"] });
     },
-    onError: (e: any) => setSyncResult({ ok: false, error: e?.message || "Onbekende fout" }),
+    onError: (e: any) => setSyncResult({
+      ok: false, debtors_synced: 0, total_created: 0, total_updated: 0,
+      total_unchanged: 0, per_debtor: [],
+      error: e?.message || "Onbekende fout",
+    }),
+  });
+
+  const startConnect = async () => {
+    try {
+      const r = await api<{ authorize_url: string }>("/integrations/nmbrs/oauth/start");
+      window.location.href = r.authorize_url;
+    } catch (e: any) {
+      alert("Fout bij starten OAuth: " + (e?.message || "onbekend"));
+    }
+  };
+
+  const disconnectMut = useMutation({
+    mutationFn: (debtorId: string) =>
+      api(`/integrations/nmbrs/debtors/${debtorId}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/integrations/nmbrs/status"] }),
   });
 
   const s = statusQ.data;
@@ -66,8 +100,9 @@ export function NmbrsSettings() {
       <header>
         <h1 className="text-2xl font-medium">NMBRS koppeling</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Medewerkers en verlof synchroniseren vanuit NMBRS. Verlof komt via
-          HaloPSA Appointment in iedereen z'n persoonlijke Outlook-agenda.
+          Medewerkers + verlof per debtor synchroniseren. Heb je meerdere
+          NMBRS-debtors (bv. IT-gemak B.V. én The Firm ISP B.V.)? Verbind
+          ze allemaal apart — elke "Verbinden"-actie voegt een debtor toe.
         </p>
       </header>
 
@@ -78,146 +113,145 @@ export function NmbrsSettings() {
             : "bg-rose-50 border-rose-200 text-rose-900"
         }`}>
           <div className="font-medium">
-            {callbackResult === "ok"
-              ? "✓ Gekoppeld aan NMBRS"
-              : "✗ Koppeling mislukt"}
+            {callbackResult === "ok" ? "✓ Debtor gekoppeld" : "✗ Koppeling mislukt"}
           </div>
           {callbackMsg && <div className="text-xs mt-1">{callbackMsg}</div>}
         </div>
       )}
 
-      {/* Status */}
+      {/* Status van credentials */}
       <section className="rounded-lg bg-white ring-1 ring-slate-200 p-5 space-y-3">
         <h2 className="text-base font-medium">Status</h2>
         {statusQ.isLoading && <div className="text-sm text-slate-500">Laden…</div>}
         {s && (
           <div className="grid grid-cols-2 gap-y-2 text-sm">
-            <StatusRow label="Credentials" ok={s.configured}>
-              {s.configured ? "Compleet" : "Ontbreken"}
-            </StatusRow>
-            <StatusRow label="OAuth verbinding" ok={s.connected}>
-              {s.connected ? "Actief" : "Niet verbonden"}
-            </StatusRow>
-            <StatusRow label="Token verloopt">
-              {fmtIso(s.access_token_expires_at)}
-            </StatusRow>
-            <StatusRow label="Laatste sync">
-              {fmtIso(s.last_sync_at)}
-            </StatusRow>
-            {s.granted_scopes.length > 0 && (
-              <div className="col-span-2">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
-                  Goedgekeurde scopes
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {s.granted_scopes.map((sc) => (
-                    <span key={sc} className="text-[11px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 font-mono">
-                      {sc}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+            <Cell label="Credentials" ok={s.configured}>{s.configured ? "Compleet" : "Ontbreken"}</Cell>
+            <Cell label="Verbonden debtors">{s.debtors.length}</Cell>
+            <Cell label="Laatste sync">{fmtIso(s.last_sync_at)}</Cell>
           </div>
         )}
       </section>
 
-      {/* Actions */}
+      {/* Lijst van gekoppelde debtors */}
       {s && (
         <section className="rounded-lg bg-white ring-1 ring-slate-200 p-5 space-y-3">
-          <h2 className="text-base font-medium">Acties</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-medium">Gekoppelde debtors</h2>
+            <button
+              onClick={startConnect}
+              className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
+            >
+              {s.debtors.length === 0 ? "Verbinden met NMBRS →" : "+ Debtor toevoegen"}
+            </button>
+          </div>
 
-          {!s.connected && (
-            <div className="space-y-2">
-              <p className="text-sm text-slate-600">
-                Klik op de knop om je NMBRS-account te koppelen. Je wordt
-                doorgestuurd naar NMBRS om consent te geven voor de scopes:
-                <code className="text-xs bg-slate-100 px-1 mx-1 rounded">employee.info.read</code>,
-                <code className="text-xs bg-slate-100 px-1 mx-1 rounded">employee.absence.read</code>,
-                <code className="text-xs bg-slate-100 px-1 mx-1 rounded">company.info.read</code>.
-              </p>
-              <button
-                onClick={async () => {
-                  try {
-                    const r = await api<{authorize_url: string}>("/integrations/nmbrs/oauth/start");
-                    window.location.href = r.authorize_url;
-                  } catch (e: any) {
-                    alert("Fout bij starten OAuth: " + (e?.message || "onbekend"));
-                  }
-                }}
-                className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
-              >
-                Verbinden met NMBRS →
-              </button>
-            </div>
+          {s.debtors.length === 0 && (
+            <p className="text-sm text-slate-500">
+              Nog geen debtor gekoppeld. Klik op "Verbinden" en kies in
+              het NMBRS consent-scherm welke debtor je wil koppelen. Heb
+              je meerdere, herhaal voor elke debtor.
+            </p>
           )}
 
-          {s.connected && (
-            <div className="space-y-3">
-              <div className="flex items-baseline gap-3 flex-wrap">
+          <ul className="space-y-2">
+            {s.debtors.map((d) => (
+              <li key={d.debtor_id} className="rounded-md ring-1 ring-slate-200 p-3 flex items-baseline justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium">{d.name}</div>
+                  <div className="text-xs text-slate-500 font-mono truncate">{d.debtor_id}</div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    Token vernieuwt: {fmtIso(d.access_token_expires_at)}
+                  </div>
+                </div>
                 <button
-                  onClick={() => syncMut.mutate()}
-                  disabled={syncMut.isPending}
-                  className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {syncMut.isPending ? "Synchroniseren…" : "Sync medewerkers nu"}
-                </button>
-                <button
-                  onClick={async () => {
-                    try {
-                      const r = await api<{authorize_url: string}>("/integrations/nmbrs/oauth/start");
-                      window.location.href = r.authorize_url;
-                    } catch (e: any) {
-                      alert("Fout: " + (e?.message || "onbekend"));
+                  onClick={() => {
+                    if (confirm(`Debtor ${d.name} ontkoppelen?`)) {
+                      disconnectMut.mutate(d.debtor_id);
                     }
                   }}
-                  className="text-xs text-slate-500 hover:text-blue-700"
+                  className="text-xs px-2 py-1 rounded ring-1 ring-rose-300 text-rose-700 hover:bg-rose-50"
                 >
-                  Opnieuw autoriseren
+                  Ontkoppelen
                 </button>
-              </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
-              {syncResult && (
-                <div className={`text-sm rounded-md p-3 ${
-                  syncResult.ok
-                    ? "bg-emerald-50 border border-emerald-200 text-emerald-900"
-                    : "bg-rose-50 border border-rose-200 text-rose-900"
-                }`}>
-                  {syncResult.ok ? (
-                    <div className="space-y-0.5">
-                      <div className="font-medium">✓ Sync klaar</div>
-                      <div className="text-xs">
-                        {syncResult.companies_seen} bedrijven bekeken;
-                        {" "}<strong>{syncResult.employees_created}</strong> nieuw,
-                        {" "}<strong>{syncResult.employees_updated}</strong> bijgewerkt,
-                        {" "}{syncResult.employees_unchanged} ongewijzigd
-                        {(syncResult.skipped_no_email ?? 0) > 0 &&
-                          <>, {syncResult.skipped_no_email} overgeslagen (geen naam)</>}
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <div className="font-medium">✗ Sync mislukt</div>
-                      <div className="text-xs mt-1">{syncResult.error}</div>
-                    </div>
-                  )}
+      {/* Sync */}
+      {s && s.debtors.length > 0 && (
+        <section className="rounded-lg bg-white ring-1 ring-slate-200 p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-medium">Synchronisatie</h2>
+            <button
+              onClick={() => syncMut.mutate()}
+              disabled={syncMut.isPending}
+              className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {syncMut.isPending ? "Synchroniseren…" : "Sync nu (alle debtors)"}
+            </button>
+          </div>
+          <p className="text-xs text-slate-500">
+            Cron draait elk uur op :07 en pikt automatisch nieuwe medewerkers op uit elke gekoppelde debtor.
+          </p>
+
+          {syncResult && (
+            <div className={`text-sm rounded-md p-3 ${
+              syncResult.ok
+                ? "bg-emerald-50 border border-emerald-200"
+                : "bg-rose-50 border border-rose-200"
+            }`}>
+              {syncResult.ok ? (
+                <div>
+                  <div className="font-medium text-emerald-900">
+                    ✓ Sync over {syncResult.debtors_synced} debtor(s) klaar
+                  </div>
+                  <div className="text-xs mt-1 text-emerald-900">
+                    Totaal: <strong>{syncResult.total_created}</strong> nieuw,
+                    {" "}<strong>{syncResult.total_updated}</strong> bijgewerkt,
+                    {" "}{syncResult.total_unchanged} ongewijzigd
+                  </div>
+                </div>
+              ) : (
+                <div className="text-rose-900">
+                  <div className="font-medium">
+                    {syncResult.error
+                      ? "✗ Sync mislukt"
+                      : "⚠ Gedeeltelijke sync — sommige debtors gefaald"}
+                  </div>
+                  {syncResult.error && <div className="text-xs mt-1">{syncResult.error}</div>}
                 </div>
               )}
 
-              <div className="text-xs text-slate-500 pt-2 border-t border-slate-100">
-                Verlof-sync naar HaloPSA-agenda's volgt zodra deze eerste
-                synchronisatie werkt. Tussenstop: even verifiëren of de
-                medewerkers-lijst klopt op <a href="/financieel/inventaris" className="underline">/financieel/inventaris</a>.
-              </div>
+              {syncResult.per_debtor.length > 0 && (
+                <ul className="mt-3 space-y-1 text-xs">
+                  {syncResult.per_debtor.map((d) => (
+                    <li key={d.debtor_id} className={d.ok ? "text-emerald-900" : "text-rose-900"}>
+                      {d.ok ? "✓" : "✗"} <strong>{d.debtor_name}</strong>:
+                      {d.ok ? (
+                        <> {d.employees_created} nieuw, {d.employees_updated} bijgewerkt,
+                        {" "}{d.companies_seen} bedrijven</>
+                      ) : (
+                        <> {d.error}</>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
+
+          <div className="text-xs text-slate-500 pt-2 border-t border-slate-100">
+            Verifieer op <a href="/financieel/inventaris" className="underline">/financieel/inventaris</a> dat de medewerkers van álle debtors zijn ingeladen.
+          </div>
         </section>
       )}
     </div>
   );
 }
 
-function StatusRow({ label, ok, children }: {
+function Cell({ label, ok, children }: {
   label: string; ok?: boolean; children: React.ReactNode;
 }) {
   return (
