@@ -282,6 +282,8 @@ async def absences_for_company(
     if result is None:
         return []
     data = _xml_to_dict(result)
+    if not isinstance(data, dict):
+        return []
     items = data.get("EmployeeAbsence", [])
     if isinstance(items, dict):
         items = [items]
@@ -357,6 +359,66 @@ async def fetch_all_absences(
                     continue
 
     return all_absences, all_employees
+
+
+
+
+
+async def leave_for_employee(
+    creds: NmbrsSoapCreds, employee_id: int, year: int,
+) -> list[dict]:
+    """Verlof (vakantie) per medewerker per jaar.
+
+    NMBRS retourneert Leave-records ZONDER unieke ID. We bouwen
+    later een deterministische business-key uit (start, end, hours,
+    description) zodat we toch idempotent kunnen syncen.
+
+    Returns list met o.a. Description, Hours, UsageType, Start, End,
+    StartHours, EndHours, Type, Status.
+    """
+    body = f'''<Leave_GetList xmlns="https://api.nmbrs.nl/soap/v3/EmployeeService">
+  <EmployeeId>{employee_id}</EmployeeId>
+  <Year>{year}</Year>
+  <LeaveType>all</LeaveType>
+  <LeaveUsageType>all</LeaveUsageType>
+</Leave_GetList>'''
+    try:
+        root = await _soap_call("EmployeeService", "Leave_GetList", creds, body)
+    except NmbrsSoapError:
+        return []
+    result = root.find(".//{https://api.nmbrs.nl/soap/v3/EmployeeService}Leave_GetListResult")
+    if result is None:
+        return []
+    data = _xml_to_dict(result)
+    # Lege response -> data is str (text). Geen leaves.
+    if not isinstance(data, dict):
+        return []
+    items = data.get("Leave", [])
+    if isinstance(items, dict):
+        items = [items]
+    return items
+
+
+def leave_business_key(
+    nmbrs_employee_uuid: str, start: str, end: str,
+    hours: str, description: str = "",
+) -> str:
+    """Deterministische key voor een NMBRS Leave-record.
+
+    NMBRS heeft geen ID voor leaves -- we bouwen een hash uit de
+    velden die samen onveranderlijk zijn. Sleutel includeert de
+    NMBRS REST employee-UUID (uniek over alle debtors) ipv het
+    employeeNumber dat kan botsen tussen debtors.
+    """
+    import hashlib
+    raw = f"{nmbrs_employee_uuid}|{start}|{end}|{hours}|{description}"
+    h = hashlib.sha1(raw.encode()).hexdigest()[:16]
+    return f"leave_{h}"
+
+
+def absence_business_key(nmbrs_absence_id: int) -> str:
+    """Business-key voor NMBRS ziekteregistratie (heeft echte ID)."""
+    return f"absence_{nmbrs_absence_id}"
 
 
 # ----- Helpers -------------------------------------------------------
