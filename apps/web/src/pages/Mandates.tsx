@@ -4,6 +4,45 @@ import { api, ApiError } from "@/lib/api";
 import { fmtDateTime } from "@/lib/format";
 import { PhoneLink } from "@/components/PhoneLink";
 
+type SnelstartConnTest = {
+  configured: boolean;
+  ok: boolean;
+  administraties_count: number;
+  administraties: { id: string; naam: string }[];
+  error: string | null;
+};
+
+type SepaMachtigingDetail = {
+  umr?: string;
+  debtor_name?: string;
+  snelstart_factuur_id?: string;
+  snelstart_factuurnummer?: string | null;
+  outcome: string;
+};
+
+type SepaMachtigingError = {
+  umr?: string;
+  phase?: string;
+  snelstart_factuur_id?: string;
+  error: string;
+};
+
+type SepaMachtigingResult = {
+  ok: boolean;
+  dry_run: boolean;
+  error: string | null;
+  mandates_total: number;
+  matched_in_snelstart: number;
+  mandates_no_match: number;
+  machtigingen_existing: number;
+  machtigingen_created: number;
+  boekingen_scanned: number;
+  boekingen_patched: number;
+  boekingen_already_set: number;
+  errors: SepaMachtigingError[];
+  details: SepaMachtigingDetail[];
+};
+
 type Mandate = {
   id: string;
   umr: string;
@@ -61,6 +100,29 @@ export function Mandates() {
     queryFn: () => api<Mandate[]>("/admin/mandates"),
   });
 
+  // Snelstart connection-status (skeleton -- werkt zodra credentials gevuld)
+  const connQ = useQuery<SnelstartConnTest>({
+    queryKey: ["/snelstart/connection-test"],
+    queryFn: () => api<SnelstartConnTest>("/snelstart/connection-test"),
+    retry: false,
+  });
+
+  const [syncResult, setSyncResult] = useState<SepaMachtigingResult | null>(null);
+  const previewMut = useMutation({
+    mutationFn: () => api<SepaMachtigingResult>(
+      "/snelstart/sepa-machtiging-sync/preview?days_back=90",
+      { method: "POST" },
+    ),
+    onSuccess: (r) => setSyncResult(r),
+  });
+  const applyMut = useMutation({
+    mutationFn: () => api<SepaMachtigingResult>(
+      "/snelstart/sepa-machtiging-sync/apply?days_back=90",
+      { method: "POST" },
+    ),
+    onSuccess: (r) => setSyncResult(r),
+  });
+
   return (
     <div>
       <div className="mb-4 flex items-baseline justify-between gap-4">
@@ -78,6 +140,136 @@ export function Mandates() {
         >
           ↗ Open ondertekenportaal
         </a>
+      </div>
+
+      {/* Snelstart -> doorlopende incassomachtiging sync */}
+      <div className="mb-6 rounded-lg bg-white ring-1 ring-slate-200 p-5 space-y-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-base font-medium">Snelstart → doorlopende incassomachtiging</h2>
+          {connQ.data?.configured ? (
+            connQ.data.ok ? (
+              <span className="text-[10px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded font-mono">
+                ✓ Verbonden ({connQ.data.administraties_count} adm)
+              </span>
+            ) : (
+              <span className="text-[10px] text-rose-700 bg-rose-100 px-2 py-0.5 rounded font-mono">
+                Fout
+              </span>
+            )
+          ) : (
+            <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded font-mono">
+              Credentials ontbreken
+            </span>
+          )}
+        </div>
+
+        {connQ.data && !connQ.data.configured && (
+          <div className="text-xs bg-amber-50 border border-amber-200 rounded p-2 text-amber-900">
+            Snelstart B2B API credentials zijn nog niet ingesteld. Vul ze in via{" "}
+            <a href="/settings/integrations" className="underline font-medium">
+              Settings → Integraties → Snelstart
+            </a>{" "}— daarna werkt de sync.
+          </div>
+        )}
+
+        {connQ.data?.configured && !connQ.data.ok && (
+          <div className="text-xs bg-rose-50 border border-rose-200 rounded p-2 text-rose-900">
+            Snelstart connection-test faalt: <span className="font-mono">{connQ.data.error}</span>
+          </div>
+        )}
+
+        <p className="text-xs text-slate-500">
+          HaloPSA pusht verkoopboekingen naar Snelstart zonder de{" "}
+          <span className="font-mono">doorlopendeIncassoMachtiging</span>-referentie.
+          Deze sync vult die referentie achteraf in zodat de boekingen in het
+          incassobestand komen. Bron-of-waarheid: SalesPilot{" "}
+          <span className="font-mono">signed_mandates</span>.
+        </p>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => previewMut.mutate()}
+            disabled={previewMut.isPending || applyMut.isPending}
+            className="text-sm px-3 py-1.5 rounded ring-1 ring-slate-300 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {previewMut.isPending ? "Bezig..." : "Test (dry-run)"}
+          </button>
+          <button
+            onClick={() => {
+              if (!confirm("Echt pushen naar Snelstart? Dit maakt aan/koppelt machtigingen en patcht verkoopboekingen.")) return;
+              applyMut.mutate();
+            }}
+            disabled={applyMut.isPending || previewMut.isPending || !connQ.data?.ok}
+            className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {applyMut.isPending ? "Pushen..." : "Echt pushen naar Snelstart"}
+          </button>
+        </div>
+
+        {syncResult && (
+          <div className={`text-sm rounded-md p-3 ${
+            syncResult.ok && !syncResult.error
+              ? syncResult.dry_run
+                ? "bg-amber-50 border border-amber-200 text-amber-900"
+                : "bg-emerald-50 border border-emerald-200 text-emerald-900"
+              : "bg-rose-50 border border-rose-200 text-rose-900"
+          }`}>
+            <div className="font-medium">
+              {syncResult.error ? "Sync mislukt" : syncResult.dry_run ? "Dry-run resultaat" : "Sync klaar"}
+            </div>
+            {syncResult.error ? (
+              <div className="text-xs mt-1">{syncResult.error}</div>
+            ) : (
+              <div className="text-xs mt-1 space-y-0.5">
+                <div>
+                  <strong>{syncResult.mandates_total}</strong> mandaten
+                  • {syncResult.matched_in_snelstart} matched in Snelstart
+                  • {syncResult.mandates_no_match} no-match
+                </div>
+                <div>
+                  Machtigingen: {syncResult.machtigingen_existing} bestaand
+                  {" "}• {syncResult.machtigingen_created} {syncResult.dry_run ? "zou aanmaken" : "aangemaakt"}
+                </div>
+                <div>
+                  Verkoopboekingen: {syncResult.boekingen_scanned} gescand
+                  {" "}• <strong>{syncResult.boekingen_patched}</strong> {syncResult.dry_run ? "zou patchen" : "gepatched"}
+                  {" "}• {syncResult.boekingen_already_set} al gekoppeld
+                </div>
+                {syncResult.errors.length > 0 && (
+                  <div className="text-rose-700">{syncResult.errors.length} fouten</div>
+                )}
+              </div>
+            )}
+            {(syncResult.details.length > 0 || syncResult.errors.length > 0) && (
+              <details className="mt-2 text-xs">
+                <summary className="cursor-pointer">Details ({syncResult.details.length} rijen)</summary>
+                <ul className="mt-1 space-y-0.5">
+                  {syncResult.details.map((d, i) => (
+                    <li key={i} className="font-mono">
+                      <span className={
+                        d.outcome === "no_match_in_snelstart" ? "text-amber-700"
+                        : d.outcome === "would_patch" ? "text-emerald-700"
+                        : d.outcome === "patched" ? "text-emerald-700"
+                        : "text-slate-500"
+                      }>
+                        [{d.outcome}]
+                      </span>{" "}
+                      <span className="text-slate-700">{d.debtor_name || d.umr}</span>
+                      {d.snelstart_factuurnummer && (
+                        <span className="text-slate-400"> — #{d.snelstart_factuurnummer}</span>
+                      )}
+                    </li>
+                  ))}
+                  {syncResult.errors.map((e, i) => (
+                    <li key={`e${i}`} className="font-mono text-rose-700">
+                      [error/{e.phase}] {e.umr || e.snelstart_factuur_id}: {e.error}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">

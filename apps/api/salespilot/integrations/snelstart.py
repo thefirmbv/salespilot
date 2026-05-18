@@ -72,6 +72,20 @@ def _normalize_base(url: str) -> str:
     return u
 
 
+def _relatie_id_of(snelstart_obj: dict) -> str | None:
+    """Pak relatie-id uit een Snelstart object dat een 'relatie'-veld heeft.
+
+    Werkt voor zowel embedded ({"id":"...", "uri":"..."}) als flat
+    (alleen 'relatieId' / 'RelatieId') varianten.
+    """
+    rel = snelstart_obj.get("relatie")
+    if isinstance(rel, dict):
+        return rel.get("id")
+    if isinstance(rel, str):
+        return rel
+    return snelstart_obj.get("relatieId") or snelstart_obj.get("RelatieId")
+
+
 class SnelStartClient:
     """One client per tenant per call-site. Re-uses the token within
     its own lifetime; pool nothing across instances.
@@ -290,6 +304,140 @@ class SnelStartClient:
     async def list_incassomachtigingen(self) -> list[dict[str, Any]]:
         data = await self._request("GET", "/incassomachtigingen")
         return data if isinstance(data, list) else (data.get("results", []) if isinstance(data, dict) else [])
+
+    async def list_incassomachtigingen_for_relatie(
+        self, relatie_id: str,
+    ) -> list[dict[str, Any]]:
+        """Filtered: alleen machtigingen van één relatie.
+
+        We gebruiken het OData $filter zodat we niet alle machtigingen
+        van alle klanten hoeven op te halen. Snelstart accepteert
+        ``relatie/id eq guid'<id>'`` als filter.
+        """
+        params = {
+            "$filter": f"relatie/id eq guid'{relatie_id}'",
+            "$top": 200,
+        }
+        try:
+            data = await self._request("GET", "/incassomachtigingen", params=params)
+        except SnelStartError:
+            # Sommige tenants accepteren de OData syntax niet. Fallback:
+            # haal alles op en filter client-side.
+            all_machtigingen = await self.list_incassomachtigingen()
+            return [
+                m for m in all_machtigingen
+                if str(_relatie_id_of(m) or "") == str(relatie_id)
+            ]
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("results", []) or []
+        return []
+
+    async def create_incassomachtiging(
+        self,
+        *,
+        relatie_id: str,
+        kenmerk: str,
+        machtiging_datum: datetime,
+        soort: str = "Doorlopend",
+        sequencetype: str = "Eerste",
+        omschrijving: str = "",
+    ) -> dict[str, Any]:
+        """Maak een doorlopende incassomachtiging aan voor een relatie.
+
+        Snelstart-veldnamen volgens hun B2B API model:
+          - relatie: { id, uri }
+          - kenmerk: uniek (= onze UMR)
+          - machtigingDatum: ISO datetime
+          - soort: 'Doorlopend' of 'Eenmalig'
+          - sequenceType: 'Eerste' bij nieuwe machtiging, daarna 'Volgende'
+
+        Veldnamen zijn camelCase in v2 API. Bij onzekerheid: probeer
+        eerst zonder optionele velden.
+        """
+        body = {
+            "relatie": {"id": relatie_id},
+            "kenmerk": kenmerk[:50],  # Snelstart max 50 chars
+            "machtigingDatum": machtiging_datum.isoformat(),
+            "soort": soort,
+            "sequenceType": sequencetype,
+        }
+        if omschrijving:
+            body["omschrijving"] = omschrijving[:50]
+        return await self._request("POST", "/incassomachtigingen", json=body)
+
+    async def update_relatie_incasso_settings(
+        self,
+        relatie_id: str,
+        *,
+        incasso_soort: str = "Standaard",
+        iban: str | None = None,
+        bic: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Zet incasso-contract op de klant.
+
+        Snelstart vereist dat de klant in de relatie-kaart als
+        'Standaard (CORE)' of 'Zakelijk (B2B)' is geconfigureerd
+        voordat machtigingen werken. Default: Standaard (CORE).
+        """
+        # We GET eerst de volledige relatie, mutate, dan PUT (Snelstart
+        # vereist een volledige body bij PUT).
+        full = await self.get_relatie(relatie_id)
+        if not full:
+            raise SnelStartError(f"Relatie {relatie_id} niet gevonden")
+        full["incasso"] = incasso_soort
+        if iban:
+            full["iban"] = iban
+        if bic:
+            full["bic"] = bic
+        return await self._request("PUT", f"/relaties/{relatie_id}", json=full)
+
+    # ------------------------------------------------------------------
+    # Verkoopboekingen (v2 -- de echte resource die HaloPSA pusht)
+    # ------------------------------------------------------------------
+
+    async def list_verkoopboekingen(
+        self,
+        *,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        top: int = 100,
+        skip: int = 0,
+        filter_expr: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Lijst verkoopboekingen. Resource heet ``/verkoopboekingen``
+        in v2 (cfr. https://b2bapi-developer.snelstart.nl).
+
+        Field ``doorlopendeIncassoMachtiging`` zit hierop -- de bestaande
+        ``/verkoopfacturen``-resource is een ander/oudere endpoint.
+        """
+        params: dict[str, Any] = {"$top": top, "$skip": skip}
+        parts: list[str] = []
+        if from_date is not None:
+            parts.append(f"factuurdatum ge {from_date.date().isoformat()}")
+        if to_date is not None:
+            parts.append(f"factuurdatum le {to_date.date().isoformat()}")
+        if filter_expr:
+            parts.append(filter_expr)
+        if parts:
+            params["$filter"] = " and ".join(parts)
+        data = await self._request("GET", "/verkoopboekingen", params=params)
+        return data if isinstance(data, list) else (
+            data.get("results", []) if isinstance(data, dict) else []
+        )
+
+    async def get_verkoopboeking(self, boeking_id: str) -> dict[str, Any] | None:
+        return await self._request("GET", f"/verkoopboekingen/{boeking_id}")
+
+    async def update_verkoopboeking(
+        self, boeking_id: str, body: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """PUT volledige verkoopboeking. Snelstart staat geen PATCH toe;
+        callers moeten GET + mutate + PUT doen."""
+        return await self._request(
+            "PUT", f"/verkoopboekingen/{boeking_id}", json=body,
+        )
 
     # ------------------------------------------------------------------
     # Convenience: test
