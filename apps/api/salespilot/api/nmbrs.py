@@ -16,7 +16,7 @@ from salespilot.models.inventory import Employee
 from salespilot.integrations.nmbrs import (
     NmbrsClient, NmbrsAuthError, NmbrsConfigError,
     build_authorize_url, exchange_code_for_tokens,
-    store_debtor_tokens, get_debtors, fetch_debtor_for_token,
+    store_debtor_tokens, get_debtors, fetch_debtors_for_token,
 )
 
 
@@ -136,20 +136,24 @@ async def oauth_callback(
     except (NmbrsConfigError, NmbrsAuthError) as e:
         return back(False, f"token_exchange_failed: {str(e)[:120]}")
 
-    # Detecteer welke debtor deze token bij hoort
+    # Detecteer ALLE debtors die deze token kan zien.
+    # Eén NMBRS-token kan meerdere debtors zien als de gebruiker
+    # rechten heeft op meerdere -- we slaan dezelfde token-set op
+    # onder elke debtor-key zodat sync over alle debtors kan lopen.
     cfg = integ.config_json or {}
-    debtor_info = await fetch_debtor_for_token(
+    debtors_found = await fetch_debtors_for_token(
         token_response["access_token"], cfg.get("subscription_key", ""),
     )
-    if not debtor_info:
+    if not debtors_found:
         return back(False, "debtor_detect_failed")
 
-    debtor_id, debtor_name = debtor_info
-    store_debtor_tokens(integ, debtor_id, debtor_name, token_response)
+    for debtor_id, debtor_name in debtors_found:
+        store_debtor_tokens(integ, debtor_id, debtor_name, token_response)
     integ.is_enabled = True
     await db.commit()
 
-    return back(True, f"connected_{debtor_name}")
+    msg = f"connected_{len(debtors_found)}_debtor(s)"
+    return back(True, msg)
 
 
 @router.delete("/debtors/{debtor_id}")

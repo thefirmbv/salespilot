@@ -301,7 +301,10 @@ class NmbrsClient:
         return await self._paginated("/api/debtors")
 
     async def companies(self) -> list[dict]:
-        return await self._paginated("/api/companies")
+        """Companies voor DEZE debtor via path-scoped endpoint.
+        /api/companies werkt niet bij multi-debtor tokens (gaf
+        ForbiddenMultiDebtor 40306). /api/debtors/{id}/companies wel."""
+        return await self._paginated(f"/api/debtors/{self.debtor_id}/companies")
 
     async def employees(self, company_id: str) -> list[dict]:
         return await self._paginated(f"/api/companies/{company_id}/employees")
@@ -332,13 +335,14 @@ class NmbrsClient:
 # ---- Helper: detecteer debtor van vers verkregen token -------------
 
 
-async def fetch_debtor_for_token(
+async def fetch_debtors_for_token(
     access_token: str, subscription_key: str,
-) -> tuple[str, str] | None:
-    """Met een vers verkregen access_token: haal /api/debtors op
-    en return (debtor_id, debtor_name) van de eerste (en enige) debtor.
+) -> list[tuple[str, str]]:
+    """Met een vers verkregen access_token: haal alle debtors op
+    waar de token toegang toe heeft. Returns list of (debtor_id, name).
 
-    NMBRS REST tokens zijn altijd debtor-scoped, dus debtors-lijst is 1 item.
+    NMBRS tokens zijn niet 1-op-1 debtor-scoped: één token kan meerdere
+    debtors zien als de NMBRS-gebruiker rechten heeft op meerdere.
     """
     async with httpx.AsyncClient(timeout=15.0) as c:
         r = await c.get(
@@ -348,15 +352,15 @@ async def fetch_debtor_for_token(
                 "X-Subscription-Key": subscription_key,
                 "Accept": "application/json",
             },
-            params={"pageNumber": 1, "pageSize": 5},
+            params={"pageNumber": 1, "pageSize": 100},
         )
     if r.status_code != 200:
-        return None
+        return []
     body = r.json()
     if not isinstance(body, dict):
-        return None
+        return []
     data = body.get("data") or []
-    if not data:
-        return None
-    debtor = data[0]
-    return (str(debtor["debtorId"]), debtor.get("name") or "Unknown")
+    return [
+        (str(d["debtorId"]), d.get("name") or "Unknown")
+        for d in data if d.get("debtorId")
+    ]
