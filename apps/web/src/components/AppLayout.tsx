@@ -284,6 +284,7 @@ export function AppLayout() {
       items: [
         { to: "/financieel/dashboard", label: "Dashboard", icon: "chart" },
         { to: "/financieel/sepa-fix",  label: "SEPA bulk-fix", icon: "shield" },
+        { to: "/financieel/inventaris", label: "Inventaris", icon: "shield" },
         { to: "/quotations", label: "Quotations", icon: "globe", badge: counts.quotations_open },
         { to: "/mandates", label: "SEPA-mandaten", icon: "shield" },
       ],
