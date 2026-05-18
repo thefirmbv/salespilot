@@ -29,6 +29,7 @@ from salespilot.api.unifi import router as unifi_router
 from salespilot.api.access import router as access_router
 from salespilot.api.financieel import router as financieel_router
 from salespilot.api.inventory import router as inventory_router
+from salespilot.api.nmbrs import router as nmbrs_router
 from salespilot.api.hosting import plesk_router, op_router
 from salespilot.api.admin import router as admin_router
 from salespilot.api.auth_m365 import router as auth_m365_router
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(access_router, prefix=prefix)
     app.include_router(financieel_router, prefix=prefix)
     app.include_router(inventory_router, prefix=prefix)
+    app.include_router(nmbrs_router, prefix=prefix)
     app.include_router(plesk_router, prefix=prefix)
     app.include_router(op_router, prefix=prefix)
     app.include_router(admin_router, prefix=prefix)

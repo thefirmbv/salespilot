@@ -22,6 +22,7 @@ import { Management } from "./pages/Management";
 import { Mandates } from "./pages/Mandates";
 import { FinancieelDashboard } from "./pages/FinancieelDashboard";
 import { Inventory } from "./pages/Inventory";
+import { NmbrsSettings } from "./pages/NmbrsSettings";
 import { SepaFix } from "./pages/SepaFix";
 import { Unifi } from "./pages/Unifi";
 import { UnifiHostDetail } from "./pages/UnifiHostDetail";
@@ -86,6 +87,7 @@ createRoot(root).render(
               <Route path="/financieel/dashboard" element={<FinancieelDashboard />} />
               <Route path="/financieel/sepa-fix" element={<SepaFix />} />
               <Route path="/financieel/inventaris" element={<Inventory />} />
+              <Route path="/settings/integrations/nmbrs" element={<NmbrsSettings />} />
               <Route path="/unifi" element={<Unifi />} />
               <Route path="/unifi/hosts/:hostId" element={<UnifiHostDetail />} />
               <Route path="/quotations/:quotationId" element={<QuotationDetail />} />
