@@ -76,10 +76,12 @@ function HaloPSABlock() {
     queryFn: () => api<HelpdeskTrend>("/financieel/helpdesk-trend?months=12"),
     staleTime: 5 * 60 * 1000,
   });
+  const modernQ = useQuery<HelpdeskTrend>({
+    queryKey: ["/financieel/account-trend", "251"],
+    queryFn: () => api<HelpdeskTrend>("/financieel/account-trend?accountsid=251&months=12"),
+    staleTime: 5 * 60 * 1000,
+  });
   const rec = recQ.data;
-  const trend = helpQ.data;
-  const allMonths = trend ? [...trend.months, ...trend.projection] : [];
-  const maxRev = allMonths.length ? Math.max(...allMonths.map(m => m.revenue)) : 1;
 
   return (
     <div className="space-y-4">
@@ -128,70 +130,118 @@ function HaloPSABlock() {
         )}
       </section>
 
-      {/* Helpdesk trend */}
-      <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-200">
-          <h2 className="text-base font-medium">8041 Helpdesk en Ad-hoc</h2>
-          <div className="text-xs text-slate-500 mt-0.5">
-            Omzet van werkuren ad-hoc per maand, met lineaire trend-projectie 12 mnd vooruit.
+      {/* Helpdesk trend (compact: chart links, tabel rechts) */}
+      <AccountTrendBlock
+        title="8041 Helpdesk en Ad-hoc"
+        subtitle="Werkuren ad-hoc per maand, lineaire trend 12 mnd vooruit."
+        trend={helpQ.data}
+        loading={helpQ.isLoading}
+      />
+
+      {/* Modern Work growth (8044) */}
+      <AccountTrendBlock
+        title="8044 Modern Work | Recurring"
+        subtitle="Modern Workspace jaarfacturatie -- actief verkocht, dus we monitoren de groei."
+        trend={modernQ.data}
+        loading={modernQ.isLoading}
+        barColor="#10b981"
+        projColor="#a7f3d0"
+      />
+    </div>
+  );
+}
+
+function AccountTrendBlock({
+  title, subtitle, trend, loading,
+  barColor = "#3b82f6", projColor = "#f59e0b",
+}: {
+  title: string;
+  subtitle: string;
+  trend: HelpdeskTrend | undefined;
+  loading: boolean;
+  barColor?: string;
+  projColor?: string;
+}) {
+  const all = trend ? [...trend.months, ...trend.projection] : [];
+  const max = all.length ? Math.max(...all.map(m => m.revenue), 1) : 1;
+  return (
+    <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-slate-200">
+        <h2 className="text-sm font-medium">{title}</h2>
+        <div className="text-[11px] text-slate-500 mt-0.5">{subtitle}</div>
+      </div>
+      {loading && <div className="p-4 text-xs text-slate-500">Laden…</div>}
+      {trend && (
+        <div className="p-3 space-y-3">
+          {/* Compacte KPI-strip */}
+          <div className="grid grid-cols-4 gap-2 text-xs">
+            <KPIMini label="Gem/mnd" value={fmtEUR(trend.average)} />
+            <KPIMini label="Trend/mnd"
+              value={(trend.growth_per_month >= 0 ? "+" : "") + fmtEUR(trend.growth_per_month)}
+              tone={trend.growth_per_month >= 0 ? "emerald" : "rose"} />
+            <KPIMini label="Totaal 12m" value={fmtEUR(trend.total_last_12)} />
+            <KPIMini label="Projectie 12m" value={fmtEUR(trend.total_projected_next_12)}
+              tone={trend.total_projected_next_12 > trend.total_last_12 ? "emerald" : "slate"} />
           </div>
-        </div>
-        {helpQ.isLoading && <div className="p-6 text-sm text-slate-500">Laden…</div>}
-        {trend && (
-          <div className="p-4 space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <KPI label="Gemiddeld/mnd" value={fmtEUR(trend.average)} />
-              <KPI label="Trend/mnd" value={(trend.growth_per_month >= 0 ? "+" : "") + fmtEUR(trend.growth_per_month)} sub="lineair fit" />
-              <KPI label="Afgelopen 12 mnd" value={fmtEUR(trend.total_last_12)} />
-              <KPI label="Projectie 12 mnd" value={fmtEUR(trend.total_projected_next_12)} sub={trend.total_projected_next_12 > trend.total_last_12 ? "📈 groei" : "📉 daling"} />
-            </div>
 
-            {/* Inline SVG chart */}
-            <div className="rounded-md bg-slate-50 p-3">
-              <HelpdeskChart months={trend.months} projection={trend.projection} max={maxRev} />
+          {/* 2-koloms: chart links, tabel rechts */}
+          <div className="grid grid-cols-[1.6fr_1fr] gap-3">
+            <div className="rounded-md bg-slate-50 p-2">
+              <HelpdeskChart months={trend.months} projection={trend.projection} max={max}
+                barColor={barColor} projColor={projColor} />
             </div>
-
-            {/* Tabel onder de grafiek */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
+            <div className="overflow-y-auto max-h-[260px] rounded-md ring-1 ring-slate-100">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-slate-50">
                   <tr className="text-[10px] uppercase tracking-wider text-slate-500">
-                    <th className="text-left px-2 py-1">Maand</th>
-                    <th className="text-right px-2 py-1">Omzet werkelijk</th>
-                    <th className="text-right px-2 py-1">Projectie</th>
-                    <th className="text-right px-2 py-1">Lines</th>
+                    <th className="text-left px-2 py-1">Mnd</th>
+                    <th className="text-right px-2 py-1">Werk.</th>
+                    <th className="text-right px-2 py-1">Proj.</th>
                   </tr>
                 </thead>
                 <tbody>
                   {trend.months.map(m => (
                     <tr key={m.label} className="border-t border-slate-100">
-                      <td className="px-2 py-1 font-mono text-xs">{m.label}</td>
-                      <td className="px-2 py-1 text-right tabular-nums">{fmtEUR(m.revenue)}</td>
-                      <td className="px-2 py-1 text-right text-slate-300">—</td>
-                      <td className="px-2 py-1 text-right tabular-nums text-xs text-slate-500">{m.line_count}</td>
+                      <td className="px-2 py-0.5 font-mono">{m.label.slice(2)}</td>
+                      <td className="px-2 py-0.5 text-right tabular-nums">{fmtEURcompact(m.revenue)}</td>
+                      <td className="px-2 py-0.5 text-right text-slate-300">—</td>
                     </tr>
                   ))}
                   {trend.projection.map(m => (
-                    <tr key={m.label} className="border-t border-slate-100 bg-amber-50/50">
-                      <td className="px-2 py-1 font-mono text-xs">{m.label}</td>
-                      <td className="px-2 py-1 text-right text-slate-300">—</td>
-                      <td className="px-2 py-1 text-right tabular-nums text-amber-700">{fmtEUR(m.revenue)}</td>
-                      <td className="px-2 py-1 text-right text-slate-300">—</td>
+                    <tr key={m.label} className="border-t border-slate-100 bg-amber-50/40">
+                      <td className="px-2 py-0.5 font-mono">{m.label.slice(2)}</td>
+                      <td className="px-2 py-0.5 text-right text-slate-300">—</td>
+                      <td className="px-2 py-0.5 text-right tabular-nums text-amber-700">{fmtEURcompact(m.revenue)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           </div>
-        )}
-      </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function KPIMini({ label, value, tone = "slate" }: { label: string; value: string; tone?: "slate" | "emerald" | "rose" }) {
+  const c = tone === "emerald" ? "text-emerald-700" : tone === "rose" ? "text-rose-700" : "text-slate-900";
+  return (
+    <div className="rounded-md bg-slate-50 px-2 py-1.5">
+      <div className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
+      <div className={`text-sm font-medium tabular-nums ${c}`}>{value}</div>
     </div>
   );
 }
 
-function HelpdeskChart({ months, projection, max }: { months: HelpdeskMonth[]; projection: HelpdeskMonth[]; max: number }) {
+function fmtEURcompact(v: number): string {
+  if (Math.abs(v) >= 1000) return `€${(v / 1000).toFixed(1)}k`;
+  return `€${Math.round(v)}`;
+}
+
+function HelpdeskChart({ months, projection, max, barColor = "#3b82f6", projColor = "#f59e0b" }: { months: HelpdeskMonth[]; projection: HelpdeskMonth[]; max: number; barColor?: string; projColor?: string }) {
   const all = [...months, ...projection];
-  const W = 720, H = 220, PADL = 50, PADR = 10, PADT = 10, PADB = 24;
+  const W = 720, H = 180, PADL = 44, PADR = 8, PADT = 22, PADB = 20;
   const innerW = W - PADL - PADR, innerH = H - PADT - PADB;
   const xStep = innerW / Math.max(1, all.length);
 
@@ -221,7 +271,7 @@ function HelpdeskChart({ months, projection, max }: { months: HelpdeskMonth[]; p
         return (
           <g key={m.label}>
             <rect x={p.x - xStep / 3} y={p.y} width={xStep * 0.66} height={PADT + innerH - p.y}
-              fill="#3b82f6" rx="1" />
+              fill={barColor} rx="1" />
           </g>
         );
       })}
@@ -231,7 +281,7 @@ function HelpdeskChart({ months, projection, max }: { months: HelpdeskMonth[]; p
         return (
           <g key={m.label}>
             <rect x={p.x - xStep / 3} y={p.y} width={xStep * 0.66} height={PADT + innerH - p.y}
-              fill="#f59e0b" rx="1" opacity="0.8" />
+              fill={projColor} rx="1" opacity="0.85" />
           </g>
         );
       })}
@@ -247,9 +297,9 @@ function HelpdeskChart({ months, projection, max }: { months: HelpdeskMonth[]; p
       })}
       {/* Legend */}
       <g transform={`translate(${PADL + 10}, ${PADT + 5})`}>
-        <rect width="10" height="10" fill="#3b82f6" rx="1" />
+        <rect width="10" height="10" fill={barColor} rx="1" />
         <text x="14" y="9" fontSize="10" fill="#374151">werkelijk</text>
-        <rect x="80" width="10" height="10" fill="#f59e0b" rx="1" opacity="0.8" />
+        <rect x="80" width="10" height="10" fill={projColor} rx="1" opacity="0.85" />
         <text x="94" y="9" fontSize="10" fill="#374151">projectie</text>
       </g>
     </svg>

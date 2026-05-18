@@ -44,13 +44,30 @@ router = APIRouter(prefix="/financieel", tags=["financieel"])
 # (= "Werkuren | Ad-hoc"). Hardcoded voor IT-Gemak; later configurable.
 HELPDESK_ACCOUNTSID = "153"
 
-# Period enum -> aantal factuurmomenten per jaar
-PERIOD_TO_PER_YEAR = {
-    1: 52,   # weekly
-    2: 12,   # monthly
-    3: 1,    # yearly
-    4: 4,    # quarterly
-    5: 2,    # half-yearly
+# Boekingscode 8044 Modern Work | Recurring -- nominal_code 251
+# ("Modern Workspace | Jaarfacturatie"). Verkopen wij actief, dus
+# eigen growth-chart.
+MODERN_WORK_ACCOUNTSID = "251"
+
+# HaloPSA recurring period enum (uit productie-observatie).
+# Mappen naar jaren per cycle i.p.v. cycles per jaar -- voorkomt
+# silent mis-telling bij onbekende waarden zoals period=7 (3-jaarlijks)
+# die in mijn vorige versie als maandelijks werden gerekend (= 36x te hoog).
+PERIOD_YEARS_PER_CYCLE: dict[int, float] = {
+    1: 1 / 52,    # wekelijks
+    2: 1 / 12,    # maandelijks
+    3: 1.0,       # jaarlijks
+    4: 1 / 4,     # kwartaal
+    5: 1 / 2,     # halfjaarlijks
+    7: 3.0,       # elk 3 jaar (Fiom domein-bundels)
+    8: 4.0,       # elk 4 jaar (vermoedelijk)
+    9: 5.0,       # elk 5 jaar (vermoedelijk)
+}
+
+PERIOD_LABELS: dict[int, str] = {
+    1: "wekelijks", 2: "maandelijks", 3: "jaarlijks",
+    4: "kwartaal", 5: "halfjaarlijks",
+    7: "3-jaarlijks", 8: "4-jaarlijks", 9: "5-jaarlijks",
 }
 
 
@@ -107,11 +124,16 @@ async def recurring_summary(auth: CurrentAuth, db: Db) -> RecurringSummary:
     by_client: dict[str, float] = defaultdict(float)
     line_count = 0
 
+    skipped_periods: dict[int, int] = defaultdict(int)
     for inv in invs:
         if inv.get("disabled"):
             continue
         period = int(inv.get("period") or 2)
-        per_year = PERIOD_TO_PER_YEAR.get(period, 12)
+        years_per_cycle = PERIOD_YEARS_PER_CYCLE.get(period)
+        if years_per_cycle is None:
+            # Onbekende period: SKIP en log (beter dan stille mis-telling)
+            skipped_periods[period] += 1
+            continue
         client_name = inv.get("client_name") or "(onbekend)"
         for ln in inv.get("lines") or []:
             line_count += 1
@@ -119,13 +141,13 @@ async def recurring_summary(auth: CurrentAuth, db: Db) -> RecurringSummary:
                 price = float(ln.get("total_price") or ln.get("net_amount") or 0)
             except (TypeError, ValueError):
                 price = 0.0
-            yearly = price * per_year
+            # price = bedrag per cycle. Jaarbijdrage = price / years_per_cycle
+            yearly = price / years_per_cycle if years_per_cycle > 0 else 0
             annual += yearly
             by_period[period] += yearly
             by_client[client_name] += yearly
 
-    period_labels = {1: "wekelijks", 2: "maandelijks", 3: "jaarlijks", 4: "kwartaal", 5: "halfjaarlijks"}
-    by_period_str = {period_labels.get(p, f"period-{p}"): round(v, 2) for p, v in by_period.items()}
+    by_period_str = {PERIOD_LABELS.get(p, f"period-{p}"): round(v, 2) for p, v in by_period.items()}
 
     top_clients = [
         {"client_name": n, "annual_revenue": round(v, 2)}
@@ -164,6 +186,17 @@ class HelpdeskTrend(BaseModel):
     projection: list[HelpdeskMonthRow]  # 12 maanden vooruit op huidige trend
     total_last_12: float
     total_projected_next_12: float
+
+
+@router.get("/account-trend", response_model=HelpdeskTrend)
+async def account_trend(
+    auth: CurrentAuth, db: Db,
+    months: int = Query(12, ge=1, le=36),
+    accountsid: str = Query(...),
+) -> HelpdeskTrend:
+    """Generieke per-account-code trend. Wrapper rond helpdesk_trend
+    met andere accountsid. Voor 8041 (helpdesk) en 8044 (Modern Work)."""
+    return await helpdesk_trend(auth=auth, db=db, months=months, accountsid=accountsid)
 
 
 @router.get("/helpdesk-trend", response_model=HelpdeskTrend)
