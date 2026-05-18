@@ -123,8 +123,12 @@ async def oauth_callback(
     except (ValueError, TypeError):
         return back(False, "bad_state")
 
-    # We zijn 'no-tenant' op deze route omdat NMBRS direct callbackt zonder
-    # onze JWT. Filter expliciet op org_id uit state.
+    # No-tenant route: NMBRS callbackt zonder onze JWT. App draait als
+    # salespilot_app (NOBYPASSRLS) dus zonder app.current_org_id GUC
+    # geeft RLS 0 rijen. We zetten de context expliciet uit state.
+    from sqlalchemy import text
+    await db.execute(text(f"SET LOCAL app.current_org_id = '{org_id}'"))
+
     integ = (
         await db.execute(
             select(Integration)
@@ -138,7 +142,7 @@ async def oauth_callback(
         token_response = await exchange_code_for_tokens(integ, code)
         store_tokens(integ, token_response)
         integ.is_enabled = True
-        await db.flush()
+        await db.commit()
     except (NmbrsConfigError, NmbrsAuthError) as e:
         return back(False, str(e)[:120])
 
