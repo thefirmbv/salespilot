@@ -440,6 +440,11 @@ class AbsenceSyncResult(BaseModel):
 
 @router.post("/sync-absences", response_model=AbsenceSyncResult)
 async def sync_absences(auth: CurrentAuth, db: Db) -> AbsenceSyncResult:
+    """User-facing endpoint: absence-sync voor huidige org."""
+    return await _run_absence_sync(auth.org_id, db)
+
+
+async def _run_absence_sync(org_id: UUID, db) -> AbsenceSyncResult:
     """Haal ziekte-records via SOAP en push naar HaloPSA Appointment.
 
     Privacy: subject is altijd generiek 'NMBRS: Afwezig'. Geen
@@ -661,7 +666,7 @@ async def sync_absences(auth: CurrentAuth, db: Db) -> AbsenceSyncResult:
                 halo_appt_id = halo_resp[0].get("id") if isinstance(halo_resp[0], dict) else None
 
             db.add(SyncedAbsence(
-                id=uuid4(), org_id=auth.org_id,
+                id=uuid4(), org_id=org_id,
                 employee_id=emp.id,
                 nmbrs_absence_id=nmbrs_abs_id,
                 nmbrs_company_id=str(a.get("_company_id") or "") or None,

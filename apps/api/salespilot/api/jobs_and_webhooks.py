@@ -1177,9 +1177,31 @@ async def nmbrs_tick(
                 f"cron sync over {len(org_results)} debtor(s)"
             )
             await db.commit()
+
+            # Absence-sync (SOAP). Skip als SOAP-creds ontbreken.
+            # NB: db.commit() heeft de SET LOCAL GUC gereset -- opnieuw zetten.
+            absence_result = None
+            cfg_check = integ.config_json or {}
+            if cfg_check.get("soap_username") and cfg_check.get("soap_token"):
+                try:
+                    await _set_org_context(db, org.id)
+                    from salespilot.api.nmbrs import _run_absence_sync
+                    ar = await _run_absence_sync(org.id, db)
+                    await db.commit()
+                    absence_result = {
+                        "ok": ar.ok,
+                        "created": ar.appointments_created,
+                        "skipped_dup": ar.appointments_skipped_duplicate,
+                        "skipped_no_match": len(ar.skipped_no_match),
+                        "error": ar.error,
+                    }
+                except Exception as e:
+                    absence_result = {"ok": False, "error": str(e)[:160]}
+
             results.append({
                 "org": str(org.id),
                 "debtors": org_results,
+                "absences": absence_result,
             })
 
     return {"ok": True, "orgs_synced": len(results), "results": results}
