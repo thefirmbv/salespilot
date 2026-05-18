@@ -21,7 +21,7 @@ type AbsenceSyncResult = {
   employees_with_absences: number;
   absences_total: number;
   appointments_created: number;
-  appointments_skipped: number;
+  appointments_skipped_duplicate: number;
   skipped_no_match: string[];
   error: string | null;
 };
@@ -140,7 +140,7 @@ export function NmbrsSettings() {
     onSuccess: (r) => setAbsenceResult(r),
     onError: (e: any) => setAbsenceResult({
       ok: false, employees_with_absences: 0, absences_total: 0,
-      appointments_created: 0, appointments_skipped: 0,
+      appointments_created: 0, appointments_skipped_duplicate: 0,
       skipped_no_match: [], error: e?.message || "onbekend",
     }),
   });
@@ -437,7 +437,7 @@ export function NmbrsSettings() {
                       {absenceResult.employees_with_absences} medewerkers met verlof,
                       {" "}{absenceResult.absences_total} records totaal —
                       {" "}<strong>{absenceResult.appointments_created}</strong> aangemaakt in HaloPSA,
-                      {" "}{absenceResult.appointments_skipped} duplicaat
+                      {" "}{absenceResult.appointments_skipped_duplicate} duplicaat
                     </div>
                   </div>
                 ) : (

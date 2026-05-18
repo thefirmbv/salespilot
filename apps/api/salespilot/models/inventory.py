@@ -41,6 +41,7 @@ class Employee(Base):
     role: Mapped[str | None] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     nmbrs_employee_id: Mapped[str | None] = mapped_column(String(40))
+    nmbrs_employee_number: Mapped[int | None] = mapped_column()
     nmbrs_company_id: Mapped[str | None] = mapped_column(String(40))
     halopsa_agent_id: Mapped[int | None] = mapped_column()
     halopsa_agent_name: Mapped[str | None] = mapped_column(String(160))

@@ -247,6 +247,11 @@ async def _sync_one_debtor(
             first = (basic.get("firstName") or "").strip()
             last = (basic.get("lastName") or "").strip()
             prefix = (basic.get("prefix") or "").strip()
+            emp_number_raw = basic.get("employeeNumber")
+            try:
+                emp_number = int(emp_number_raw) if emp_number_raw is not None else None
+            except (ValueError, TypeError):
+                emp_number = None
             email = None
             role = None
 
@@ -287,6 +292,8 @@ async def _sync_one_debtor(
                     existing.email = email; changed = True
                 if existing.nmbrs_company_id != cid:
                     existing.nmbrs_company_id = cid; changed = True
+                if emp_number is not None and existing.nmbrs_employee_number != emp_number:
+                    existing.nmbrs_employee_number = emp_number; changed = True
                 if role and not existing.role:
                     existing.role = role; changed = True
                 if changed:
@@ -299,6 +306,7 @@ async def _sync_one_debtor(
                     id=uuid4(), org_id=org_id,
                     full_name=full, email=email, role=role, status="active",
                     nmbrs_employee_id=nmbrs_emp_id,
+                    nmbrs_employee_number=emp_number,
                     nmbrs_company_id=cid,
                     created_at=now, updated_at=now,
                 ))
@@ -425,27 +433,35 @@ class AbsenceSyncResult(BaseModel):
     employees_with_absences: int = 0
     absences_total: int = 0
     appointments_created: int = 0
-    appointments_skipped: int = 0
+    appointments_skipped_duplicate: int = 0
     skipped_no_match: list[str] = []
     error: str | None = None
 
 
 @router.post("/sync-absences", response_model=AbsenceSyncResult)
 async def sync_absences(auth: CurrentAuth, db: Db) -> AbsenceSyncResult:
-    """Haal absences via SOAP en push naar HaloPSA Appointment.
+    """Haal ziekte-records via SOAP en push naar HaloPSA Appointment.
+
+    Privacy: subject is altijd generiek 'NMBRS: Afwezig'. Geen
+    medische info in de Outlook-agenda.
+
+    Matching: employees worden gematcht op nmbrs_employee_number
+    (= Number-veld in NMBRS, gemeenschappelijk tussen REST en SOAP).
+    Eerst een korte sync van NMBRS SOAP employee-lijst om dat te vullen
+    waar het nog mist.
 
     Skip-logica:
       - Employee zonder halopsa_agent_id  -> in skipped_no_match
-      - Absence al gesynced (nmbrs_absence_id bestaat in synced_absences) -> skip
+      - Absence al gesynced (uniek op nmbrs_absence_id) -> skip
     """
     from uuid import uuid4
-    from datetime import date as date_cls
     from salespilot.integrations.nmbrs_soap import (
         NmbrsSoapCreds, NmbrsSoapError, fetch_all_absences,
-        classify_absence, absence_colour, parse_nmbrs_date,
+        environment_get, parse_nmbrs_date, is_fullday_absence,
     )
     from salespilot.integrations.halopsa import HaloPSAClient, HaloPSACredentials
     from salespilot.models.absences import SyncedAbsence
+    from salespilot.models.inventory import Employee
 
     integ = (
         await db.execute(select(Integration).where(Integration.kind == "nmbrs"))
@@ -461,7 +477,6 @@ async def sync_absences(auth: CurrentAuth, db: Db) -> AbsenceSyncResult:
             error="SOAP-credentials ontbreken. Vul ze in bij Settings > NMBRS.",
         )
 
-    # HaloPSA integration
     halo_integ = (
         await db.execute(select(Integration).where(Integration.kind == "halopsa"))
     ).scalar_one_or_none()
@@ -469,36 +484,72 @@ async def sync_absences(auth: CurrentAuth, db: Db) -> AbsenceSyncResult:
         return AbsenceSyncResult(ok=False, error="HaloPSA not configured")
     halo_cfg = halo_integ.config_json
 
-    # NMBRS SOAP fetch
-    creds = NmbrsSoapCreds(username=soap_user, token=soap_token)
+    # SOAP creds + domain (Environment_Get)
+    creds = NmbrsSoapCreds(
+        username=soap_user, token=soap_token,
+        domain=cfg.get("soap_domain", ""),
+    )
+    if not creds.domain:
+        try:
+            sub = await environment_get(creds)
+        except NmbrsSoapError as e:
+            return AbsenceSyncResult(
+                ok=False, error=f"Environment_Get faalde: {str(e)[:160]}",
+            )
+        if not sub:
+            return AbsenceSyncResult(ok=False, error="Kon NMBRS subdomain niet ontdekken")
+        creds.domain = sub
+        # Persist voor volgende keer
+        new_cfg = dict(cfg); new_cfg["soap_domain"] = sub
+        integ.config_json = new_cfg
+        await db.flush()
+
+    # Fetch absences + SOAP employee-mapping
     try:
-        by_employee = await fetch_all_absences(creds)
+        all_abs, all_soap_emps = await fetch_all_absences(creds)
     except NmbrsSoapError as e:
         return AbsenceSyncResult(ok=False, error=f"SOAP error: {str(e)[:200]}")
 
-    if not by_employee:
-        return AbsenceSyncResult(ok=True, employees_with_absences=0, absences_total=0)
-
-    # Map NMBRS employee_id -> Employee record
-    # NMBRS REST employeeId is UUID, SOAP gebruikt INT -- we matchen via employeeNumber
-    # MAAR: in onze tabel hebben we de UUID opgeslagen (REST). Voor SOAP int-IDs
-    # moeten we matchen via Employee.nmbrs_employee_id als die zowel int als uuid kan zijn.
-    # Conservative aanpak: match via int->str van SOAP-id, of via UUID als string.
-    from salespilot.models.inventory import Employee
-
+    # Vul nmbrs_employee_number op employees-rijen aan waar ie ontbreekt.
+    # SOAP gebruikt Number-veld als business-id; REST employeeBasicInfo
+    # heeft dezelfde value als employeeNumber. Match op naam als fallback.
     employees = (
         await db.execute(select(Employee))
     ).scalars().all()
 
-    # Bouw lookup: int-id (SOAP) -> Employee
-    # NB: SOAP en REST gebruiken verschillende employee-IDs. We hebben nu alleen
-    # de REST-UUID in nmbrs_employee_id staan. Dat gaan we straks fixen door óók
-    # employeeNumber op te slaan (column al klaar: nmbrs_employee_id is str).
-    # Voor nu: skip alle absences (de int->uuid match komt na first-test).
-    employees_by_nmbrs_id: dict[str, Employee] = {}
+    # SOAP employees: {DisplayName: Number} en {Id: Number}
+    soap_by_name: dict[str, int] = {}
+    soap_id_to_number: dict[int, int] = {}
+    for se in all_soap_emps:
+        name = (se.get("DisplayName") or "").strip()
+        num_raw = se.get("Number")
+        id_raw = se.get("Id")
+        try:
+            num = int(num_raw) if num_raw else None
+        except (ValueError, TypeError):
+            num = None
+        try:
+            sid = int(id_raw) if id_raw else None
+        except (ValueError, TypeError):
+            sid = None
+        if num and name:
+            soap_by_name[name.lower()] = num
+        if num and sid:
+            soap_id_to_number[sid] = num
+
+    # Update employees waar nmbrs_employee_number nog ontbreekt
     for e in employees:
-        if e.nmbrs_employee_id:
-            employees_by_nmbrs_id[str(e.nmbrs_employee_id)] = e
+        if e.nmbrs_employee_number is None and e.full_name:
+            n = soap_by_name.get(e.full_name.lower())
+            if n is not None:
+                e.nmbrs_employee_number = n
+    await db.flush()
+
+    # Map nmbrs_employee_number -> Employee voor matching
+    emp_by_number: dict[int, Employee] = {
+        e.nmbrs_employee_number: e
+        for e in employees if e.nmbrs_employee_number is not None
+    }
 
     halo_creds = HaloPSACredentials(
         base_url=halo_cfg.get("base_url", ""),
@@ -509,121 +560,138 @@ async def sync_absences(auth: CurrentAuth, db: Db) -> AbsenceSyncResult:
 
     created = 0
     skipped_dup = 0
-    skipped_no_match_list: list[str] = []
-    total = 0
+    skipped_list: list[str] = []
+    employees_with_absences: set[int] = set()
 
     async with HaloPSAClient(halo_creds) as halo_client:
-        for nmbrs_emp_id, absences in by_employee.items():
-            total += len(absences)
-            emp = employees_by_nmbrs_id.get(str(nmbrs_emp_id))
-            if not emp:
-                skipped_no_match_list.append(f"nmbrs_id={nmbrs_emp_id}: niet gevonden in SalesPilot")
+        for a in all_abs:
+            nmbrs_abs_id_raw = a.get("AbsenceId")
+            if not nmbrs_abs_id_raw:
                 continue
+            try:
+                nmbrs_abs_id = int(nmbrs_abs_id_raw)
+            except (ValueError, TypeError):
+                continue
+
+            # SOAP geeft EmployeeId (int) -> match via soap_id_to_number -> Number -> Employee
+            emp_soap_id_raw = a.get("EmployeeId")
+            try:
+                emp_soap_id = int(emp_soap_id_raw) if emp_soap_id_raw else None
+            except (ValueError, TypeError):
+                emp_soap_id = None
+
+            emp_number = soap_id_to_number.get(emp_soap_id) if emp_soap_id else None
+            if emp_number is None:
+                skipped_list.append(
+                    f"abs_id={nmbrs_abs_id}: SOAP emp_id {emp_soap_id} niet gevonden"
+                )
+                continue
+
+            emp = emp_by_number.get(emp_number)
+            if emp is None:
+                skipped_list.append(
+                    f"abs_id={nmbrs_abs_id}: employee number {emp_number} niet in SalesPilot"
+                )
+                continue
+
+            employees_with_absences.add(emp.id)
+
             if not emp.halopsa_agent_id:
-                skipped_no_match_list.append(f"{emp.full_name}: geen HaloPSA-agent gekoppeld")
+                skipped_list.append(
+                    f"{emp.full_name}: geen HaloPSA-agent gekoppeld"
+                )
                 continue
 
-            for a in absences:
-                # NMBRS absence-id is uniek per absence
-                nmbrs_abs_id = a.get("AbsenceId") or a.get("Id")
-                if not nmbrs_abs_id:
-                    continue
-                try:
-                    nmbrs_abs_id_int = int(nmbrs_abs_id)
-                except (ValueError, TypeError):
-                    continue
-
-                # Al eerder gesynced?
-                existing = (
-                    await db.execute(
-                        select(SyncedAbsence).where(
-                            SyncedAbsence.nmbrs_absence_id == nmbrs_abs_id_int,
-                        )
+            # Al eerder gesynced?
+            existing = (
+                await db.execute(
+                    select(SyncedAbsence).where(
+                        SyncedAbsence.nmbrs_absence_id == nmbrs_abs_id,
                     )
-                ).scalar_one_or_none()
-                if existing:
-                    skipped_dup += 1
-                    continue
+                )
+            ).scalar_one_or_none()
+            if existing:
+                skipped_dup += 1
+                continue
 
-                # Map velden
-                code, label = classify_absence(a)
-                start_dt = parse_nmbrs_date(a.get("Start") or a.get("StartDate"))
-                end_dt = parse_nmbrs_date(a.get("End") or a.get("EndDate"))
-                if not start_dt:
-                    continue
-                end_dt = end_dt or start_dt
-                pct = a.get("Percentage")
-                try:
-                    pct_int = int(pct) if pct else None
-                except (ValueError, TypeError):
-                    pct_int = None
+            start_dt = parse_nmbrs_date(a.get("Start"))
+            end_dt = parse_nmbrs_date(a.get("End"))
+            if not start_dt:
+                continue
+            # Geen end -> lopende absence -> end = vandaag (of laat als allday voor today)
+            if not end_dt:
+                end_dt = start_dt
 
-                subject = f"{label} — {emp.full_name}"
-                if pct_int and pct_int < 100 and code == "sick":
-                    subject = f"{label} ({pct_int}%) — {emp.full_name}"
+            # Subject altijd generiek -- privacy
+            subject = "NMBRS: Afwezig"
 
-                # POST naar HaloPSA Appointment
-                halo_body = {
-                    "agent_id": emp.halopsa_agent_id,
-                    "subject": subject,
-                    "start_date": start_dt.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "end_date": end_dt.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "allday": True,
-                    "colour": absence_colour(code),
-                    "appointment_type_name": "Reminder",
-                    "note": a.get("Comment") or "",
-                }
-                try:
-                    halo_resp = await halo_client._request(
-                        "POST", "/api/Appointment", json=[halo_body],
-                    )
-                except Exception as e:
-                    skipped_no_match_list.append(
-                        f"{emp.full_name}: HaloPSA POST mislukt — {str(e)[:80]}"
-                    )
-                    continue
+            # Allday-bepaling
+            allday = is_fullday_absence(start_dt, end_dt)
+            if allday:
+                start_str = start_dt.strftime("%Y-%m-%dT00:00:00")
+                end_str = end_dt.strftime("%Y-%m-%dT23:59:00")
+            else:
+                start_str = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
+                end_str = end_dt.strftime("%Y-%m-%dT%H:%M:%S")
 
-                halo_appt_id = None
-                if isinstance(halo_resp, dict):
-                    halo_appt_id = halo_resp.get("id")
-                elif isinstance(halo_resp, list) and halo_resp:
-                    halo_appt_id = halo_resp[0].get("id") if isinstance(halo_resp[0], dict) else None
+            halo_body = {
+                "agent_id": emp.halopsa_agent_id,
+                "subject": subject,
+                "start_date": start_str,
+                "end_date": end_str,
+                "allday": allday,
+                "colour": "#6b7280",  # neutraal grijs -- geen type-leak
+                "appointment_type_name": "Reminder",
+                # GEEN note, GEEN comment, GEEN medische info
+            }
+            try:
+                halo_resp = await halo_client._request(
+                    "POST", "/api/Appointment", json=[halo_body],
+                )
+            except Exception as e:
+                skipped_list.append(
+                    f"{emp.full_name}: HaloPSA POST mislukt -- {str(e)[:80]}"
+                )
+                continue
 
-                # Persist
-                db.add(SyncedAbsence(
-                    id=uuid4(), org_id=auth.org_id,
-                    employee_id=emp.id,
-                    nmbrs_absence_id=nmbrs_abs_id_int,
-                    nmbrs_company_id=str(a.get("_company_id") or "") or None,
-                    halopsa_appointment_id=halo_appt_id,
-                    absence_type_code=code,
-                    absence_type_label=label,
-                    start_date=start_dt.date(),
-                    end_date=end_dt.date(),
-                    percentage=pct_int,
-                    comment=a.get("Comment"),
-                    subject=subject,
-                    last_modified_at=parse_nmbrs_date(
-                        a.get("LastChanged") or a.get("Modified")
-                    ),
-                    synced_at=datetime.now(UTC),
-                ))
-                created += 1
+            halo_appt_id = None
+            if isinstance(halo_resp, dict):
+                halo_appt_id = halo_resp.get("id")
+            elif isinstance(halo_resp, list) and halo_resp:
+                halo_appt_id = halo_resp[0].get("id") if isinstance(halo_resp[0], dict) else None
+
+            db.add(SyncedAbsence(
+                id=uuid4(), org_id=auth.org_id,
+                employee_id=emp.id,
+                nmbrs_absence_id=nmbrs_abs_id,
+                nmbrs_company_id=str(a.get("_company_id") or "") or None,
+                halopsa_appointment_id=halo_appt_id,
+                absence_type_code="absent",
+                absence_type_label="Afwezig",
+                start_date=start_dt.date(),
+                end_date=end_dt.date(),
+                percentage=None,  # niet opslaan -- privacy
+                comment=None,     # niet opslaan -- privacy
+                subject=subject,
+                last_modified_at=None,
+                synced_at=datetime.now(UTC),
+            ))
+            created += 1
             await db.flush()
 
     integ.last_sync_at = datetime.now(UTC)
     integ.last_sync_status = "ok"
     integ.last_sync_message = (
         f"absences sync: {created} aangemaakt, "
-        f"{skipped_dup} duplicaat, {len(skipped_no_match_list)} skipped"
+        f"{skipped_dup} duplicaat, {len(skipped_list)} overgeslagen"
     )
     await db.flush()
 
     return AbsenceSyncResult(
         ok=True,
-        employees_with_absences=len(by_employee),
-        absences_total=total,
+        employees_with_absences=len(employees_with_absences),
+        absences_total=len(all_abs),
         appointments_created=created,
-        appointments_skipped=skipped_dup,
-        skipped_no_match=skipped_no_match_list[:50],
+        appointments_skipped_duplicate=skipped_dup,
+        skipped_no_match=skipped_list[:50],
     )
