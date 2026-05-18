@@ -181,13 +181,11 @@ function SubsTab() {
       {showManual && <ManualForm onClose={() => { setShowManual(false); qc.invalidateQueries({ queryKey: ["/plesk/subscriptions"] }); }} />}
 
       <div className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
-        <div className="grid grid-cols-[1.4fr_1fr_100px_1fr_140px_90px_90px] gap-3 border-b border-slate-200 px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500">
+        <div className="grid grid-cols-[1.6fr_1.2fr_120px_1.4fr_100px] gap-3 border-b border-slate-200 px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500">
           <div>Subscription</div>
           <div>Hoofd-domein</div>
           <div>Plan</div>
           <div>Klant</div>
-          <div>Product (tarief)</div>
-          <div className="text-right">HaloPSA</div>
           <div className="text-right">Status</div>
         </div>
         {rows.length === 0 ? (
@@ -195,7 +193,7 @@ function SubsTab() {
             Geen subscriptions. Klik <strong>+ Handmatig</strong> om er één toe te voegen.
           </div>
         ) : rows.map(s => (
-          <div key={s.id} className="grid grid-cols-[1.4fr_1fr_100px_1fr_140px_90px_90px] items-center gap-3 border-b border-slate-100 px-4 py-2 text-sm hover:bg-slate-50">
+          <div key={s.id} className="grid grid-cols-[1.6fr_1.2fr_120px_1.4fr_100px] items-center gap-3 border-b border-slate-100 px-4 py-2 text-sm hover:bg-slate-50">
             <div className="min-w-0 flex items-center gap-2">
               <span className={`inline-block w-2 h-2 rounded-full ${s.status === "active" ? "bg-emerald-500" : s.status === "suspended" ? "bg-amber-500" : "bg-rose-500"}`} />
               <span className="truncate font-medium">{s.name}</span>
@@ -210,20 +208,7 @@ function SubsTab() {
                 <CompanyPicker subId={s.id} onLinked={() => qc.invalidateQueries({ queryKey: ["/plesk/subscriptions"] })} />
               )}
             </div>
-            <div className="text-xs">
-              <ProductPicker
-                productId={s.halopsa_product_id}
-                onChange={(pid) => api(`/plesk/subscriptions/${s.id}/product`, { method: "PUT", body: JSON.stringify({ halopsa_product_id: pid }) }).then(() => qc.invalidateQueries({ queryKey: ["/plesk/subscriptions"] }))}
-                listUrl="/plesk/halopsa-products"
-              />
-            </div>
-            <div className="text-right text-[11px]">
-              {s.halopsa_asset_id ? (
-                <span className="text-emerald-700">asset #{s.halopsa_asset_id}</span>
-              ) : (
-                <span className="text-slate-400">niet gesynced</span>
-              )}
-            </div>
+            {/* PAUZE: Product + HaloPSA asset cellen verborgen tot recurring-invoice flow klaar is */}
             <div className="text-right">
               <span className={`inline-block px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
                 s.status === "active" ? "bg-emerald-50 text-emerald-800" :
@@ -418,6 +403,10 @@ function Field({ label, value, onChange, placeholder, required }: any) {
 
 
 function SyncAllBar() {
+  // PAUZE: asset-write naar HaloPSA tijdelijk uit
+  // tot we de juiste recurring-invoice koppeling hebben ingericht
+  return null;
+  // eslint-disable-next-line @typescript-eslint/no-unreachable
   const qc = useQueryClient();
   const syncMut = useMutation({
     mutationFn: () => api<any>("/plesk/sync-halopsa-assets", { method: "POST" }),

@@ -15,6 +15,34 @@ type DashboardResponse = {
   to_date: string;
 };
 
+type RecurringSummary = {
+  invoice_count: number;
+  line_count: number;
+  annual_revenue: number;
+  revenue_24m: number;
+  revenue_36m: number;
+  by_period: Record<string, number>;
+  top_clients: { client_name: string; annual_revenue: number }[];
+};
+
+type HelpdeskMonth = {
+  year: number;
+  month: number;
+  label: string;
+  revenue: number;
+  line_count: number;
+};
+
+type HelpdeskTrend = {
+  accountsid: string;
+  months: HelpdeskMonth[];
+  average: number;
+  growth_per_month: number;
+  projection: HelpdeskMonth[];
+  total_last_12: number;
+  total_projected_next_12: number;
+};
+
 const fmtEUR = (v: number) =>
   v.toLocaleString("nl-NL", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 const fmtEURexact = (v: number) =>
@@ -29,6 +57,206 @@ const monthLabel = (m: string) => {
 };
 
 export function FinancieelDashboard() {
+  return (
+    <div className="space-y-6">
+      <HaloPSABlock />
+      <SnelStartBlock />
+    </div>
+  );
+}
+
+function HaloPSABlock() {
+  const recQ = useQuery<RecurringSummary>({
+    queryKey: ["/financieel/recurring-summary"],
+    queryFn: () => api<RecurringSummary>("/financieel/recurring-summary"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const helpQ = useQuery<HelpdeskTrend>({
+    queryKey: ["/financieel/helpdesk-trend"],
+    queryFn: () => api<HelpdeskTrend>("/financieel/helpdesk-trend?months=12"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const rec = recQ.data;
+  const trend = helpQ.data;
+  const allMonths = trend ? [...trend.months, ...trend.projection] : [];
+  const maxRev = allMonths.length ? Math.max(...allMonths.map(m => m.revenue)) : 1;
+
+  return (
+    <div className="space-y-4">
+      {/* Recurring summary */}
+      <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-200">
+          <h2 className="text-base font-medium">Recurring facturen (HaloPSA)</h2>
+          <div className="text-xs text-slate-500 mt-0.5">
+            Projectie op basis van alle huidige recurring-invoice regels in HaloPSA.
+          </div>
+        </div>
+        {recQ.isLoading && <div className="p-6 text-sm text-slate-500">Laden…</div>}
+        {rec && (
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <KPI label="12 maanden" value={fmtEUR(rec.annual_revenue)} sub={`${rec.invoice_count} invoices · ${rec.line_count} lines`} />
+              <KPI label="24 maanden" value={fmtEUR(rec.revenue_24m)} />
+              <KPI label="36 maanden" value={fmtEUR(rec.revenue_36m)} />
+              <KPI label="Per maand gemiddeld" value={fmtEUR(rec.annual_revenue / 12)} />
+            </div>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Verdeling per facturatie-frequentie</div>
+                <ul className="space-y-1 text-sm">
+                  {Object.entries(rec.by_period).map(([k, v]) => (
+                    <li key={k} className="flex justify-between border-b border-slate-100 py-1">
+                      <span className="capitalize">{k}</span>
+                      <span className="tabular-nums font-medium">{fmtEUR(v)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Top 10 klanten (jaaromzet recurring)</div>
+                <ul className="space-y-1 text-sm">
+                  {rec.top_clients.map(c => (
+                    <li key={c.client_name} className="flex justify-between border-b border-slate-100 py-1">
+                      <span className="truncate pr-2">{c.client_name}</span>
+                      <span className="tabular-nums font-medium">{fmtEUR(c.annual_revenue)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Helpdesk trend */}
+      <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-200">
+          <h2 className="text-base font-medium">8041 Helpdesk en Ad-hoc</h2>
+          <div className="text-xs text-slate-500 mt-0.5">
+            Omzet van werkuren ad-hoc per maand, met lineaire trend-projectie 12 mnd vooruit.
+          </div>
+        </div>
+        {helpQ.isLoading && <div className="p-6 text-sm text-slate-500">Laden…</div>}
+        {trend && (
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <KPI label="Gemiddeld/mnd" value={fmtEUR(trend.average)} />
+              <KPI label="Trend/mnd" value={(trend.growth_per_month >= 0 ? "+" : "") + fmtEUR(trend.growth_per_month)} sub="lineair fit" />
+              <KPI label="Afgelopen 12 mnd" value={fmtEUR(trend.total_last_12)} />
+              <KPI label="Projectie 12 mnd" value={fmtEUR(trend.total_projected_next_12)} sub={trend.total_projected_next_12 > trend.total_last_12 ? "📈 groei" : "📉 daling"} />
+            </div>
+
+            {/* Inline SVG chart */}
+            <div className="rounded-md bg-slate-50 p-3">
+              <HelpdeskChart months={trend.months} projection={trend.projection} max={maxRev} />
+            </div>
+
+            {/* Tabel onder de grafiek */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wider text-slate-500">
+                    <th className="text-left px-2 py-1">Maand</th>
+                    <th className="text-right px-2 py-1">Omzet werkelijk</th>
+                    <th className="text-right px-2 py-1">Projectie</th>
+                    <th className="text-right px-2 py-1">Lines</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trend.months.map(m => (
+                    <tr key={m.label} className="border-t border-slate-100">
+                      <td className="px-2 py-1 font-mono text-xs">{m.label}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{fmtEUR(m.revenue)}</td>
+                      <td className="px-2 py-1 text-right text-slate-300">—</td>
+                      <td className="px-2 py-1 text-right tabular-nums text-xs text-slate-500">{m.line_count}</td>
+                    </tr>
+                  ))}
+                  {trend.projection.map(m => (
+                    <tr key={m.label} className="border-t border-slate-100 bg-amber-50/50">
+                      <td className="px-2 py-1 font-mono text-xs">{m.label}</td>
+                      <td className="px-2 py-1 text-right text-slate-300">—</td>
+                      <td className="px-2 py-1 text-right tabular-nums text-amber-700">{fmtEUR(m.revenue)}</td>
+                      <td className="px-2 py-1 text-right text-slate-300">—</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function HelpdeskChart({ months, projection, max }: { months: HelpdeskMonth[]; projection: HelpdeskMonth[]; max: number }) {
+  const all = [...months, ...projection];
+  const W = 720, H = 220, PADL = 50, PADR = 10, PADT = 10, PADB = 24;
+  const innerW = W - PADL - PADR, innerH = H - PADT - PADB;
+  const xStep = innerW / Math.max(1, all.length);
+
+  const xy = (i: number, v: number) => ({
+    x: PADL + i * xStep + xStep / 2,
+    y: PADT + innerH - (max > 0 ? (v / max) * innerH : 0),
+  });
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
+      {/* gridlines */}
+      {[0, 0.25, 0.5, 0.75, 1].map(f => (
+        <line key={f} x1={PADL} x2={W - PADR}
+          y1={PADT + innerH * (1 - f)} y2={PADT + innerH * (1 - f)}
+          stroke="#e5e7eb" strokeDasharray="2,3" />
+      ))}
+      {/* Y labels */}
+      {[0, 0.5, 1].map(f => (
+        <text key={f} x={PADL - 5} y={PADT + innerH * (1 - f) + 4}
+          textAnchor="end" fontSize="9" fill="#64748b">
+          €{Math.round((max * f) / 1000)}k
+        </text>
+      ))}
+      {/* werkelijk (blauw) */}
+      {months.map((m, i) => {
+        const p = xy(i, m.revenue);
+        return (
+          <g key={m.label}>
+            <rect x={p.x - xStep / 3} y={p.y} width={xStep * 0.66} height={PADT + innerH - p.y}
+              fill="#3b82f6" rx="1" />
+          </g>
+        );
+      })}
+      {/* projectie (amber) */}
+      {projection.map((m, i) => {
+        const p = xy(months.length + i, m.revenue);
+        return (
+          <g key={m.label}>
+            <rect x={p.x - xStep / 3} y={p.y} width={xStep * 0.66} height={PADT + innerH - p.y}
+              fill="#f59e0b" rx="1" opacity="0.8" />
+          </g>
+        );
+      })}
+      {/* X labels */}
+      {all.map((m, i) => {
+        if (i % 2 !== 0 && all.length > 14) return null;
+        const p = xy(i, 0);
+        return (
+          <text key={m.label} x={p.x} y={H - 6} textAnchor="middle" fontSize="9" fill="#64748b">
+            {m.label.slice(2)}
+          </text>
+        );
+      })}
+      {/* Legend */}
+      <g transform={`translate(${PADL + 10}, ${PADT + 5})`}>
+        <rect width="10" height="10" fill="#3b82f6" rx="1" />
+        <text x="14" y="9" fontSize="10" fill="#374151">werkelijk</text>
+        <rect x="80" width="10" height="10" fill="#f59e0b" rx="1" opacity="0.8" />
+        <text x="94" y="9" fontSize="10" fill="#374151">projectie</text>
+      </g>
+    </svg>
+  );
+}
+
+function SnelStartBlock() {
   const [months, setMonths] = useState(4);
   const dataQ = useQuery<DashboardResponse>({
     queryKey: ["/snelstart/dashboard", months],
