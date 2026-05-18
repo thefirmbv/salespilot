@@ -656,6 +656,13 @@ async def _run_absence_sync(org_id: UUID, db) -> AbsenceSyncResult:
                 end_raw = lv.get("End") or start_raw
                 hours = lv.get("Hours") or ""
                 description = lv.get("Description") or ""
+                usage_type = lv.get("UsageType") or ""
+
+                # Alleen 'Withdrawal' = werkelijke verlofopname.
+                # 'Store' = administratieve saldo-opbouw (geen afwezigheid).
+                if usage_type != "Withdrawal":
+                    continue
+
                 bkey = leave_business_key(
                     emp.nmbrs_employee_id or str(emp.id),
                     start_raw, end_raw, hours, description,
