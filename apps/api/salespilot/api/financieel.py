@@ -313,6 +313,246 @@ async def helpdesk_trend(
     )
 
 
+
+
+# ----------------------------------------------------------------------
+# Totale omzet per maand + groei-projectie (€1M-doel tracking)
+# ----------------------------------------------------------------------
+
+
+class RevenueMonth(BaseModel):
+    year: int
+    month: int
+    label: str
+    revenue: float
+    invoice_count: int
+
+
+class GrowthProjection(BaseModel):
+    """Maandelijkse omzet + projectie naar einde van het jaar.
+
+    growth_strategy beschrijft hoe we projecteren:
+      - "linear_fit": lineaire regressie op alle beschikbare maanden
+      - "monthly_average": gemiddelde van afgelopen 12 mnd × resterende mnd
+    Beide worden uitgerekend zodat de UI ze kan vergelijken.
+    """
+    months_history: list[RevenueMonth]
+    months_projection: list[RevenueMonth]
+    average_per_month: float          # gem over hele history-window
+    growth_per_month: float           # lineaire trend
+    year_to_date: float               # huidig kalenderjaar tot vandaag
+    projection_full_year: float       # YTD + projectie resterende mnd lineair
+    projection_avg_year: float        # YTD + (avg × resterende mnd)
+    target_one_million: float         # = 1_000_000
+    target_pct_achieved: float        # YTD / target * 100
+    target_pct_projected: float       # proj_full_year / target * 100
+    target_met_linear: bool           # haalt projectie >= 1M
+    target_gap_to_million: float      # 1M - projection_full_year (positief = tekort)
+
+
+@router.get("/revenue-growth", response_model=GrowthProjection)
+async def revenue_growth(
+    auth: CurrentAuth, db: Db,
+    months: int = Query(24, ge=6, le=36),
+) -> GrowthProjection:
+    """Totale omzet per maand uit posted invoices + projectie naar
+    einde van huidig kalenderjaar.
+
+    Target: EUR 1.000.000 voor het jaar. We tonen:
+      - YTD (year-to-date) van huidig kalenderjaar
+      - 2 projectie-varianten: lineair fit OF maandgemiddelde
+      - gap-to-million in euros + percentage
+    """
+    client = await _halopsa_client(db)
+    now = datetime.now(UTC)
+    date_from = (now - timedelta(days=months * 32)).strftime("%Y-%m-%d")
+
+    try:
+        async with client as c:
+            d = await c._request(
+                "GET", "/api/Invoice",
+                params={"count": 2000, "date_from": date_from, "posted_only": "true"},
+            )
+    except HaloPSAError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    invs = d.get("invoices", []) if isinstance(d, dict) else []
+    bucket: dict[tuple[int, int], dict[str, Any]] = defaultdict(
+        lambda: {"revenue": 0.0, "invoice_count": 0}
+    )
+    for inv in invs:
+        date_str = inv.get("invoice_date") or inv.get("date") or inv.get("date_created") or ""
+        try:
+            dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            continue
+        try:
+            tot = float(inv.get("total") or inv.get("net_total") or 0)
+        except (TypeError, ValueError):
+            tot = 0.0
+        key = (dt.year, dt.month)
+        bucket[key]["revenue"] += tot
+        bucket[key]["invoice_count"] += 1
+
+    # Bouw maandlijst van oudste naar nieuwste -- alleen maanden met data
+    # (zo'n maand zonder data is data-quality probleem, niet "nul-omzet").
+    # We pakken minimum 6 maanden, anders is regressie te ruisig.
+    sorted_keys = sorted(bucket.keys())
+    if not sorted_keys:
+        raise HTTPException(status_code=404, detail="Geen invoice-data gevonden.")
+
+    # Skip de eerste maand als hij heel laag is (vaak partial maand bij
+    # data-startpunt). Heuristiek: drop alles dat < 10% van max-revenue is.
+    max_rev = max(b["revenue"] for b in bucket.values())
+    threshold = max_rev * 0.10
+    filtered_keys = [k for k in sorted_keys if bucket[k]["revenue"] >= threshold]
+    if len(filtered_keys) < 6:
+        filtered_keys = sorted_keys  # neem alles als filter te streng
+
+    history: list[RevenueMonth] = []
+    for y, m in filtered_keys:
+        v = bucket[(y, m)]
+        history.append(RevenueMonth(
+            year=y, month=m, label=f"{y}-{m:02d}",
+            revenue=round(v["revenue"], 2),
+            invoice_count=int(v["invoice_count"]),
+        ))
+
+    n = len(history)
+    revenues = [h.revenue for h in history]
+    avg = sum(revenues) / max(1, n)
+
+    # Lineaire regressie
+    if n >= 2:
+        xs = list(range(n))
+        x_mean = sum(xs) / n
+        y_mean = sum(revenues) / n
+        num = sum((xs[i] - x_mean) * (revenues[i] - y_mean) for i in range(n))
+        den = sum((xs[i] - x_mean) ** 2 for i in range(n)) or 1.0
+        slope = num / den
+        intercept = y_mean - slope * x_mean
+    else:
+        slope = 0.0
+        intercept = revenues[0] if revenues else 0.0
+
+    # Projecteer vanaf laatste maand tot december van huidig kalenderjaar
+    last_y, last_m = history[-1].year, history[-1].month
+    # Bepaal hoeveel maanden tot eind van huidig jaar (vanaf laatste data)
+    projection: list[RevenueMonth] = []
+    # Start projectie ná de laatste history-maand
+    py, pm = last_y, last_m
+    for step in range(1, 25):  # max 24 mnd vooruit
+        pm += 1
+        if pm > 12:
+            pm = 1
+            py += 1
+        predicted = max(0.0, intercept + slope * (n + step - 1))
+        projection.append(RevenueMonth(
+            year=py, month=pm, label=f"{py}-{pm:02d}",
+            revenue=round(predicted, 2),
+            invoice_count=0,
+        ))
+        # Stop projectie aan eind van huidig kalenderjaar
+        if py == now.year and pm == 12:
+            break
+        # Als laatste history-maand al december was: stop direct
+        if py > now.year:
+            break
+
+    # YTD = som van history-maanden in huidig kalenderjaar
+    ytd = sum(h.revenue for h in history if h.year == now.year)
+    # Projectie volle jaar lineair = YTD + som projection in huidig jaar
+    proj_curr_year_linear = sum(p.revenue for p in projection if p.year == now.year)
+    proj_full_year_linear = ytd + proj_curr_year_linear
+    # Projectie volle jaar via maandgemiddelde
+    # Hoeveel maanden van huidig jaar zijn nog ná de laatste history-maand?
+    months_remaining = sum(1 for p in projection if p.year == now.year)
+    proj_full_year_avg = ytd + (avg * months_remaining)
+
+    target = 1_000_000.0
+    return GrowthProjection(
+        months_history=history,
+        months_projection=projection,
+        average_per_month=round(avg, 2),
+        growth_per_month=round(slope, 2),
+        year_to_date=round(ytd, 2),
+        projection_full_year=round(proj_full_year_linear, 2),
+        projection_avg_year=round(proj_full_year_avg, 2),
+        target_one_million=target,
+        target_pct_achieved=round(ytd / target * 100, 1),
+        target_pct_projected=round(proj_full_year_linear / target * 100, 1),
+        target_met_linear=proj_full_year_linear >= target,
+        target_gap_to_million=round(target - proj_full_year_linear, 2),
+    )
+
+
+# ----------------------------------------------------------------------
+# Top klanten op WERKELIJKE omzet (niet recurring projectie)
+# ----------------------------------------------------------------------
+
+
+class ClientRevenueRow(BaseModel):
+    client_name: str
+    revenue: float
+    invoice_count: int
+
+
+@router.get("/top-clients-actual", response_model=list[ClientRevenueRow])
+async def top_clients_actual(
+    auth: CurrentAuth, db: Db,
+    months: int = Query(12, ge=1, le=36),
+    limit: int = Query(15, ge=1, le=50),
+) -> list[ClientRevenueRow]:
+    """Top klanten op WERKELIJK gefactureerde omzet (posted invoices).
+    Verschilt van /recurring-summary top_clients: project-werk + eenmalig
+    werk wordt hier wel meegenomen, daar niet."""
+    client = await _halopsa_client(db)
+    now = datetime.now(UTC)
+    date_from = (now - timedelta(days=months * 32)).strftime("%Y-%m-%d")
+    try:
+        async with client as c:
+            d = await c._request(
+                "GET", "/api/Invoice",
+                params={"count": 2000, "date_from": date_from, "posted_only": "true"},
+            )
+    except HaloPSAError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    invs = d.get("invoices", []) if isinstance(d, dict) else []
+    by_client: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"revenue": 0.0, "invoice_count": 0}
+    )
+    cutoff = now - timedelta(days=months * 30.5)
+    for inv in invs:
+        ds = inv.get("invoice_date") or inv.get("date") or ""
+        try:
+            dt = datetime.fromisoformat(ds.replace("Z", "+00:00"))
+            # Normaliseer naar timezone-aware UTC voor compare
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            if dt < cutoff:
+                continue
+        except (ValueError, AttributeError):
+            continue
+        try:
+            tot = float(inv.get("total") or inv.get("net_total") or 0)
+        except (TypeError, ValueError):
+            tot = 0.0
+        name = inv.get("client_name") or "(onbekend)"
+        by_client[name]["revenue"] += tot
+        by_client[name]["invoice_count"] += 1
+
+    rows = [
+        ClientRevenueRow(
+            client_name=n, revenue=round(v["revenue"], 2),
+            invoice_count=int(v["invoice_count"]),
+        )
+        for n, v in by_client.items()
+    ]
+    rows.sort(key=lambda r: -r.revenue)
+    return rows[:limit]
+
+
 # ----------------------------------------------------------------------
 # Account-code catalog (zodat UI selecteren kan)
 # ----------------------------------------------------------------------

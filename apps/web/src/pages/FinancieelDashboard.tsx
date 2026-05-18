@@ -33,6 +33,35 @@ type HelpdeskMonth = {
   line_count: number;
 };
 
+type RevenueMonth = {
+  year: number;
+  month: number;
+  label: string;
+  revenue: number;
+  invoice_count: number;
+};
+
+type GrowthProjection = {
+  months_history: RevenueMonth[];
+  months_projection: RevenueMonth[];
+  average_per_month: number;
+  growth_per_month: number;
+  year_to_date: number;
+  projection_full_year: number;
+  projection_avg_year: number;
+  target_one_million: number;
+  target_pct_achieved: number;
+  target_pct_projected: number;
+  target_met_linear: boolean;
+  target_gap_to_million: number;
+};
+
+type ClientRevenueRow = {
+  client_name: string;
+  revenue: number;
+  invoice_count: number;
+};
+
 type HelpdeskTrend = {
   accountsid: string;
   months: HelpdeskMonth[];
@@ -81,16 +110,31 @@ function HaloPSABlock() {
     queryFn: () => api<HelpdeskTrend>("/financieel/account-trend?accountsid=251&months=12"),
     staleTime: 5 * 60 * 1000,
   });
+  const growthQ = useQuery<GrowthProjection>({
+    queryKey: ["/financieel/revenue-growth"],
+    queryFn: () => api<GrowthProjection>("/financieel/revenue-growth?months=24"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const actualClientsQ = useQuery<ClientRevenueRow[]>({
+    queryKey: ["/financieel/top-clients-actual"],
+    queryFn: () => api<ClientRevenueRow[]>("/financieel/top-clients-actual?limit=10&months=12"),
+    staleTime: 5 * 60 * 1000,
+  });
   const rec = recQ.data;
+  const growth = growthQ.data;
+  const actualClients = actualClientsQ.data;
 
   return (
     <div className="space-y-4">
+      {/* === Algehele groei + EUR 1M target === */}
+      <RevenueGrowthBlock data={growth} loading={growthQ.isLoading} />
+
       {/* Recurring summary */}
       <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-200">
           <h2 className="text-base font-medium">Recurring facturen (HaloPSA)</h2>
           <div className="text-xs text-slate-500 mt-0.5">
-            Projectie op basis van alle huidige recurring-invoice regels in HaloPSA.
+            Projectie op basis van huidige recurring-invoice regels. Eenmalige facturen tellen hier NIET mee.
           </div>
         </div>
         {recQ.isLoading && <div className="p-6 text-sm text-slate-500">Laden…</div>}
@@ -115,7 +159,7 @@ function HaloPSABlock() {
                 </ul>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Top 10 klanten (jaaromzet recurring)</div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Top 10 klanten op recurring jaarprojectie <span className="text-slate-400 normal-case font-normal">(alleen recurring-invoices)</span></div>
                 <ul className="space-y-1 text-sm">
                   {rec.top_clients.map(c => (
                     <li key={c.client_name} className="flex justify-between border-b border-slate-100 py-1">
@@ -127,6 +171,33 @@ function HaloPSABlock() {
               </div>
             </div>
           </div>
+        )}
+      </section>
+
+      {/* Top klanten op werkelijke omzet (12 mnd posted invoices) */}
+      <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-200 flex items-baseline justify-between flex-wrap gap-2">
+          <div>
+            <h2 className="text-base font-medium">Top 10 klanten — werkelijke omzet 12 mnd</h2>
+            <div className="text-xs text-slate-500 mt-0.5">
+              Op basis van geboekte facturen. Project-werk + eenmalig + recurring samen.
+            </div>
+          </div>
+        </div>
+        {actualClientsQ.isLoading && <div className="p-4 text-sm text-slate-500">Laden…</div>}
+        {actualClients && (
+          <ul className="divide-y divide-slate-100">
+            {actualClients.map((c, i) => (
+              <li key={c.client_name} className="flex items-baseline justify-between px-4 py-1.5 text-sm">
+                <div className="flex items-baseline gap-2 truncate pr-2">
+                  <span className="text-slate-400 tabular-nums text-xs w-5">{i + 1}.</span>
+                  <span className="truncate">{c.client_name}</span>
+                  <span className="text-[10px] text-slate-400">({c.invoice_count} invs)</span>
+                </div>
+                <span className="tabular-nums font-medium">{fmtEUR(c.revenue)}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 
@@ -148,6 +219,170 @@ function HaloPSABlock() {
         projColor="#a7f3d0"
       />
     </div>
+  );
+}
+
+function RevenueGrowthBlock({ data, loading }: { data: GrowthProjection | undefined; loading: boolean }) {
+  if (loading) {
+    return (
+      <section className="rounded-lg bg-white ring-1 ring-slate-200 p-4 text-sm text-slate-500">
+        Laden algehele omzet-groei…
+      </section>
+    );
+  }
+  if (!data) return null;
+
+  const all = [...data.months_history, ...data.months_projection];
+  const max = Math.max(...all.map(m => m.revenue), data.target_one_million / 12, 1);
+  const targetLine = data.target_one_million / 12;
+  const met = data.target_met_linear;
+
+  return (
+    <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
+      <div className="px-4 py-3 border-b border-slate-200">
+        <h2 className="text-base font-medium">Algehele omzet-groei — €1M doel {met ? "🎯" : ""}</h2>
+        <div className="text-xs text-slate-500 mt-0.5">
+          Werkelijke omzet per maand uit alle geboekte facturen, met projectie naar einde van het jaar.
+        </div>
+      </div>
+      <div className="p-3 space-y-3">
+        {/* KPI strip */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+          <KPIMini label="YTD 2026" value={fmtEUR(data.year_to_date)} />
+          <KPIMini
+            label="Projectie volle jaar (lineair)"
+            value={fmtEUR(data.projection_full_year)}
+            tone={met ? "emerald" : "rose"}
+          />
+          <KPIMini
+            label="Projectie volle jaar (gem.)"
+            value={fmtEUR(data.projection_avg_year)}
+            tone={data.projection_avg_year >= data.target_one_million ? "emerald" : "rose"}
+          />
+          <KPIMini
+            label="€1M doel"
+            value={`${data.target_pct_projected.toFixed(1)}%`}
+            tone={met ? "emerald" : "rose"}
+          />
+        </div>
+
+        {/* Target-balk */}
+        <div className="space-y-1">
+          <div className="flex justify-between text-[11px] text-slate-500">
+            <span>Voortgang naar €1M (lineaire projectie)</span>
+            <span className={met ? "text-emerald-700 font-medium" : "text-rose-700 font-medium"}>
+              {met
+                ? `✓ €1M wordt gehaald (+${fmtEUR(-data.target_gap_to_million)})`
+                : `✗ Tekort: ${fmtEUR(data.target_gap_to_million)}`}
+            </span>
+          </div>
+          <div className="relative h-3 bg-slate-100 rounded overflow-hidden">
+            <div
+              className={`absolute left-0 top-0 h-full ${met ? "bg-emerald-500" : "bg-amber-400"}`}
+              style={{ width: `${Math.min(100, data.target_pct_projected)}%` }}
+            />
+            <div
+              className="absolute top-0 h-full bg-blue-500"
+              style={{ width: `${Math.min(100, data.target_pct_achieved)}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-[10px] text-slate-500">
+            <span><span className="inline-block w-2 h-2 bg-blue-500 rounded-sm align-middle mr-1" />Gerealiseerd YTD: {data.target_pct_achieved.toFixed(1)}%</span>
+            <span><span className={`inline-block w-2 h-2 ${met ? "bg-emerald-500" : "bg-amber-400"} rounded-sm align-middle mr-1`} />Inclusief projectie: {data.target_pct_projected.toFixed(1)}%</span>
+          </div>
+        </div>
+
+        {/* Chart */}
+        <div className="rounded-md bg-slate-50 p-2">
+          <RevenueChart history={data.months_history} projection={data.months_projection}
+            max={max} targetLine={targetLine} />
+        </div>
+
+        <div className="text-[11px] text-slate-500 flex flex-wrap gap-4">
+          <span>Gemiddeld: <strong>{fmtEUR(data.average_per_month)}/mnd</strong></span>
+          <span>Trend: <strong className={data.growth_per_month >= 0 ? "text-emerald-700" : "text-rose-700"}>{data.growth_per_month >= 0 ? "+" : ""}{fmtEUR(data.growth_per_month)}/mnd</strong></span>
+          <span>Maandgemiddelde nodig: <strong>{fmtEUR(83333)}/mnd</strong> voor €1M</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RevenueChart({ history, projection, max, targetLine }: {
+  history: RevenueMonth[];
+  projection: RevenueMonth[];
+  max: number;
+  targetLine: number;
+}) {
+  const all = [...history, ...projection];
+  const W = 720, H = 200, PADL = 50, PADR = 8, PADT = 22, PADB = 22;
+  const innerW = W - PADL - PADR, innerH = H - PADT - PADB;
+  const xStep = innerW / Math.max(1, all.length);
+  const xy = (i: number, v: number) => ({
+    x: PADL + i * xStep + xStep / 2,
+    y: PADT + innerH - (max > 0 ? (v / max) * innerH : 0),
+  });
+  const targetY = PADT + innerH - (targetLine / max) * innerH;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
+      {/* gridlines */}
+      {[0, 0.25, 0.5, 0.75, 1].map(f => (
+        <line key={f} x1={PADL} x2={W - PADR}
+          y1={PADT + innerH * (1 - f)} y2={PADT + innerH * (1 - f)}
+          stroke="#e5e7eb" strokeDasharray="2,3" />
+      ))}
+      {/* Y labels */}
+      {[0, 0.5, 1].map(f => (
+        <text key={f} x={PADL - 5} y={PADT + innerH * (1 - f) + 4}
+          textAnchor="end" fontSize="9" fill="#64748b">
+          €{Math.round((max * f) / 1000)}k
+        </text>
+      ))}
+      {/* Target-lijn EUR 83k/mnd */}
+      <line x1={PADL} x2={W - PADR} y1={targetY} y2={targetY}
+        stroke="#dc2626" strokeWidth="1.5" strokeDasharray="5,3" />
+      <text x={W - PADR - 4} y={targetY - 3} textAnchor="end" fontSize="9" fill="#dc2626" fontWeight="600">
+        €1M doel: €{Math.round(targetLine / 1000)}k/mnd
+      </text>
+      {/* werkelijk (blauw) */}
+      {history.map((m, i) => {
+        const p = xy(i, m.revenue);
+        return (
+          <rect key={m.label} x={p.x - xStep / 3} y={p.y}
+            width={xStep * 0.66} height={PADT + innerH - p.y}
+            fill="#3b82f6" rx="1" />
+        );
+      })}
+      {/* projectie (amber) */}
+      {projection.map((m, i) => {
+        const p = xy(history.length + i, m.revenue);
+        return (
+          <rect key={m.label} x={p.x - xStep / 3} y={p.y}
+            width={xStep * 0.66} height={PADT + innerH - p.y}
+            fill="#f59e0b" rx="1" opacity="0.85" />
+        );
+      })}
+      {/* X labels */}
+      {all.map((m, i) => {
+        if (i % 2 !== 0 && all.length > 14) return null;
+        const p = xy(i, 0);
+        return (
+          <text key={m.label} x={p.x} y={H - 6} textAnchor="middle" fontSize="9" fill="#64748b">
+            {m.label.slice(2)}
+          </text>
+        );
+      })}
+      {/* Legend */}
+      <g transform={`translate(${PADL + 10}, 6)`}>
+        <rect width="10" height="10" fill="#3b82f6" rx="1" />
+        <text x="14" y="9" fontSize="10" fill="#374151">werkelijk</text>
+        <rect x="80" width="10" height="10" fill="#f59e0b" rx="1" opacity="0.85" />
+        <text x="94" y="9" fontSize="10" fill="#374151">projectie</text>
+        <line x1="160" x2="180" y1="5" y2="5" stroke="#dc2626" strokeWidth="1.5" strokeDasharray="3,2" />
+        <text x="184" y="9" fontSize="10" fill="#374151">€1M doel</text>
+      </g>
+    </svg>
   );
 }
 
