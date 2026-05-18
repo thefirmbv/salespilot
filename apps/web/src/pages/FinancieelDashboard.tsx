@@ -121,12 +121,11 @@ function HaloPSABlock() {
     queryFn: () => api<HelpdeskTrend>("/financieel/account-trend?accountsid=251&months=12"),
     staleTime: 5 * 60 * 1000,
   });
-  const [openLabor, setOpenLabor] = useState(0);
   const [includeAcq, setIncludeAcq] = useState(true);
   const growthQ = useQuery<GrowthProjection>({
-    queryKey: ["/financieel/revenue-growth", openLabor, includeAcq],
+    queryKey: ["/financieel/revenue-growth", includeAcq],
     queryFn: () => api<GrowthProjection>(
-      `/financieel/revenue-growth?months=24&open_labor_estimate=${openLabor}&include_acquisition=${includeAcq}`
+      `/financieel/revenue-growth?months=24&include_acquisition=${includeAcq}`
     ),
     staleTime: 5 * 60 * 1000,
   });
@@ -142,7 +141,7 @@ function HaloPSABlock() {
   return (
     <div className="space-y-4">
       {/* === Algehele groei + EUR 1M target === */}
-      <RevenueGrowthBlock data={growth} loading={growthQ.isLoading} openLabor={openLabor} setOpenLabor={setOpenLabor} includeAcq={includeAcq} setIncludeAcq={setIncludeAcq} />
+      <RevenueGrowthBlock data={growth} loading={growthQ.isLoading} includeAcq={includeAcq} setIncludeAcq={setIncludeAcq} />
 
       {/* Recurring summary */}
       <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
@@ -238,12 +237,10 @@ function HaloPSABlock() {
 }
 
 function RevenueGrowthBlock({
-  data, loading, openLabor, setOpenLabor, includeAcq, setIncludeAcq,
+  data, loading, includeAcq, setIncludeAcq,
 }: {
   data: GrowthProjection | undefined;
   loading: boolean;
-  openLabor: number;
-  setOpenLabor: (n: number) => void;
   includeAcq: boolean;
   setIncludeAcq: (b: boolean) => void;
 }) {
@@ -264,8 +261,7 @@ function RevenueGrowthBlock({
   const max = Math.max(
     ...allBars.map(m =>
       m.revenue +
-      (m.pending_recurring || 0) +
-      (m.pending_labor_estimate || 0)
+      (m.pending_recurring || 0)
     ),
     data.target_one_million / 12,
     1,
@@ -310,31 +306,22 @@ function RevenueGrowthBlock({
               <strong>Lopende maand {data.current_month.label}</strong>:
               gefactureerd <strong>{fmtEUR(data.current_month.revenue)}</strong>
               {data.current_month.pending_recurring > 0 && (
-                <> + nog te factureren recurring <strong className="text-emerald-700">{fmtEUR(data.current_month.pending_recurring)}</strong></>
+                <> + pending recurring <strong className="text-sky-700">{fmtEUR(data.current_month.pending_recurring)}</strong></>
               )}
-              {" "}= verwacht <strong>{fmtEUR(data.current_month.revenue + data.current_month.pending_recurring + data.current_month.pending_labor_estimate)}</strong>
+              {" "}= verwacht <strong>{fmtEUR(data.current_month.revenue + data.current_month.pending_recurring)}</strong>
+              <span className="ml-2 text-[10px] text-slate-500">(excl. Labor — niet geautomatiseerd uit HaloPSA)</span>
             </div>
           </div>
         )}
 
-        {/* Acquisitie + open labor inputs */}
-        <div className="grid md:grid-cols-2 gap-3 rounded-md bg-slate-50 px-3 py-2 text-xs">
-          <label className="flex items-baseline gap-2">
-            <span className="text-slate-600 whitespace-nowrap">Open labor schatting (€):</span>
-            <input
-              type="number" min="0" step="500" value={openLabor}
-              onChange={(e) => setOpenLabor(Math.max(0, parseFloat(e.target.value) || 0))}
-              className="flex-1 rounded border border-slate-300 px-2 py-0.5 text-sm tabular-nums max-w-[140px]"
-              placeholder="0"
-            />
-            <span className="text-[10px] text-slate-400">geboekte uren × tarief uit HaloPSA</span>
-          </label>
-          <label className="flex items-baseline gap-2">
+        {/* Acquisitie toggle (open labor: niet automatiseerbaar zonder Sales-Pilot agent permissies) */}
+        <div className="rounded-md bg-slate-50 px-3 py-2 text-xs">
+          <label className="flex items-baseline gap-2 flex-wrap">
             <input
               type="checkbox" checked={includeAcq}
               onChange={(e) => setIncludeAcq(e.target.checked)}
             />
-            <span className="text-slate-600">Acquisitie meerekenen</span>
+            <span className="text-slate-600">Acquisitie meerekenen in projectie</span>
             <span className="text-[10px] text-slate-400">
               {data.avg_deals_won_per_month.toFixed(1)} deals/mnd × €{data.avg_deal_amount.toFixed(0)} ×
               {" "}{(data.acquisition_recurring_fraction * 100).toFixed(0)}% recurring
@@ -447,23 +434,23 @@ function RevenueChart({ history, currentMonth, projection, max, targetLine }: {
         );
       })}
 
-      {/* lopende maand: blauw onder + emerald (pending) bovenop, gestippelde rand */}
+      {/* lopende maand: blauw onder + sky-cyan (pending recurring) bovenop, gestippelde rand */}
       {currentMonth && (() => {
         const cx = xCenter(xi++);
         const blueH = PADT + innerH - yFor(currentMonth.revenue);
-        const pending = currentMonth.pending_recurring + currentMonth.pending_labor_estimate;
+        const pending = currentMonth.pending_recurring;
         const pendingTopY = yFor(currentMonth.revenue + pending);
         const totalTopY = yFor(currentMonth.revenue + pending);
         return (
           <g key={currentMonth.label}>
-            {/* blauw deel: werkelijk */}
+            {/* blauw deel: werkelijk gefactureerd */}
             <rect x={cx - barW / 2} y={yFor(currentMonth.revenue)}
               width={barW} height={blueH} fill="#3b82f6" rx="1" />
-            {/* emerald deel: nog te factureren */}
+            {/* sky-cyan deel: pending recurring (excl. Labor) */}
             {pending > 0 && (
               <rect x={cx - barW / 2} y={pendingTopY}
                 width={barW} height={yFor(currentMonth.revenue) - pendingTopY}
-                fill="#10b981" opacity="0.85" rx="1" />
+                fill="#0ea5e9" opacity="0.85" rx="1" />
             )}
             {/* gestippelde rand om hele staaf */}
             <rect x={cx - barW / 2} y={totalTopY}
@@ -513,12 +500,14 @@ function RevenueChart({ history, currentMonth, projection, max, targetLine }: {
       <g transform={`translate(${PADL + 4}, 6)`}>
         <rect width="10" height="10" fill="#3b82f6" rx="1" />
         <text x="14" y="9" fontSize="10" fill="#374151">werkelijk</text>
-        <rect x="76" width="10" height="10" fill="#10b981" rx="1" opacity="0.85" />
-        <text x="90" y="9" fontSize="10" fill="#374151">pending / acquisitie</text>
-        <rect x="190" width="10" height="10" fill="#f59e0b" rx="1" opacity="0.85" />
-        <text x="204" y="9" fontSize="10" fill="#374151">projectie basis</text>
-        <line x1="280" x2="300" y1="5" y2="5" stroke="#dc2626" strokeWidth="1.5" strokeDasharray="3,2" />
-        <text x="304" y="9" fontSize="10" fill="#374151">€1M doel</text>
+        <rect x="68" width="10" height="10" fill="#0ea5e9" rx="1" opacity="0.85" />
+        <text x="82" y="9" fontSize="10" fill="#374151">pending (excl. Labor)</text>
+        <rect x="200" width="10" height="10" fill="#f59e0b" rx="1" opacity="0.85" />
+        <text x="214" y="9" fontSize="10" fill="#374151">projectie basis</text>
+        <rect x="298" width="10" height="10" fill="#10b981" rx="1" opacity="0.85" />
+        <text x="312" y="9" fontSize="10" fill="#374151">acquisitie</text>
+        <line x1="376" x2="396" y1="5" y2="5" stroke="#dc2626" strokeWidth="1.5" strokeDasharray="3,2" />
+        <text x="400" y="9" fontSize="10" fill="#374151">€1M doel</text>
       </g>
     </svg>
   );
