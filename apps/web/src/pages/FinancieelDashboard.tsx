@@ -39,21 +39,32 @@ type RevenueMonth = {
   label: string;
   revenue: number;
   invoice_count: number;
+  is_current_month: boolean;
+  is_projection: boolean;
+  pending_recurring: number;
+  pending_labor_estimate: number;
+  acquisition_uplift: number;
 };
 
 type GrowthProjection = {
   months_history: RevenueMonth[];
+  current_month: RevenueMonth | null;
   months_projection: RevenueMonth[];
   average_per_month: number;
   growth_per_month: number;
   year_to_date: number;
-  projection_full_year: number;
-  projection_avg_year: number;
+  projection_full_year_linear: number;
+  projection_full_year_average: number;
+  projection_full_year_with_acquisition: number;
   target_one_million: number;
   target_pct_achieved: number;
   target_pct_projected: number;
-  target_met_linear: boolean;
+  target_met: boolean;
   target_gap_to_million: number;
+  avg_deals_won_per_month: number;
+  avg_deal_amount: number;
+  acquisition_recurring_fraction: number;
+  acquisition_monthly_uplift: number;
 };
 
 type ClientRevenueRow = {
@@ -110,9 +121,13 @@ function HaloPSABlock() {
     queryFn: () => api<HelpdeskTrend>("/financieel/account-trend?accountsid=251&months=12"),
     staleTime: 5 * 60 * 1000,
   });
+  const [openLabor, setOpenLabor] = useState(0);
+  const [includeAcq, setIncludeAcq] = useState(true);
   const growthQ = useQuery<GrowthProjection>({
-    queryKey: ["/financieel/revenue-growth"],
-    queryFn: () => api<GrowthProjection>("/financieel/revenue-growth?months=24"),
+    queryKey: ["/financieel/revenue-growth", openLabor, includeAcq],
+    queryFn: () => api<GrowthProjection>(
+      `/financieel/revenue-growth?months=24&open_labor_estimate=${openLabor}&include_acquisition=${includeAcq}`
+    ),
     staleTime: 5 * 60 * 1000,
   });
   const actualClientsQ = useQuery<ClientRevenueRow[]>({
@@ -127,7 +142,7 @@ function HaloPSABlock() {
   return (
     <div className="space-y-4">
       {/* === Algehele groei + EUR 1M target === */}
-      <RevenueGrowthBlock data={growth} loading={growthQ.isLoading} />
+      <RevenueGrowthBlock data={growth} loading={growthQ.isLoading} openLabor={openLabor} setOpenLabor={setOpenLabor} includeAcq={includeAcq} setIncludeAcq={setIncludeAcq} />
 
       {/* Recurring summary */}
       <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
@@ -222,7 +237,16 @@ function HaloPSABlock() {
   );
 }
 
-function RevenueGrowthBlock({ data, loading }: { data: GrowthProjection | undefined; loading: boolean }) {
+function RevenueGrowthBlock({
+  data, loading, openLabor, setOpenLabor, includeAcq, setIncludeAcq,
+}: {
+  data: GrowthProjection | undefined;
+  loading: boolean;
+  openLabor: number;
+  setOpenLabor: (n: number) => void;
+  includeAcq: boolean;
+  setIncludeAcq: (b: boolean) => void;
+}) {
   if (loading) {
     return (
       <section className="rounded-lg bg-white ring-1 ring-slate-200 p-4 text-sm text-slate-500">
@@ -232,32 +256,45 @@ function RevenueGrowthBlock({ data, loading }: { data: GrowthProjection | undefi
   }
   if (!data) return null;
 
-  const all = [...data.months_history, ...data.months_projection];
-  const max = Math.max(...all.map(m => m.revenue), data.target_one_million / 12, 1);
+  const allBars = [
+    ...data.months_history,
+    ...(data.current_month ? [data.current_month] : []),
+    ...data.months_projection,
+  ];
+  const max = Math.max(
+    ...allBars.map(m =>
+      m.revenue +
+      (m.pending_recurring || 0) +
+      (m.pending_labor_estimate || 0)
+    ),
+    data.target_one_million / 12,
+    1,
+  );
   const targetLine = data.target_one_million / 12;
-  const met = data.target_met_linear;
+  const met = data.target_met;
 
   return (
     <section className="rounded-lg bg-white ring-1 ring-slate-200 overflow-hidden">
       <div className="px-4 py-3 border-b border-slate-200">
         <h2 className="text-base font-medium">Algehele omzet-groei — €1M doel {met ? "🎯" : ""}</h2>
         <div className="text-xs text-slate-500 mt-0.5">
-          Werkelijke omzet per maand uit alle geboekte facturen, met projectie naar einde van het jaar.
+          Werkelijke omzet per maand + projectie naar eind kalenderjaar.
+          Lopende maand telt NIET in trend-fit (incomplete data).
         </div>
       </div>
       <div className="p-3 space-y-3">
         {/* KPI strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-          <KPIMini label="YTD 2026" value={fmtEUR(data.year_to_date)} />
+          <KPIMini label="YTD 2026 (incl. te factureren)" value={fmtEUR(data.year_to_date)} />
           <KPIMini
-            label="Projectie volle jaar (lineair)"
-            value={fmtEUR(data.projection_full_year)}
-            tone={met ? "emerald" : "rose"}
+            label="Projectie lineair"
+            value={fmtEUR(data.projection_full_year_linear)}
+            tone={data.projection_full_year_linear >= data.target_one_million ? "emerald" : "rose"}
           />
           <KPIMini
-            label="Projectie volle jaar (gem.)"
-            value={fmtEUR(data.projection_avg_year)}
-            tone={data.projection_avg_year >= data.target_one_million ? "emerald" : "rose"}
+            label="Projectie + acquisitie"
+            value={fmtEUR(data.projection_full_year_with_acquisition)}
+            tone={met ? "emerald" : "rose"}
           />
           <KPIMini
             label="€1M doel"
@@ -266,10 +303,50 @@ function RevenueGrowthBlock({ data, loading }: { data: GrowthProjection | undefi
           />
         </div>
 
+        {/* Lopende maand expliciet */}
+        {data.current_month && (
+          <div className="rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-xs flex items-baseline justify-between flex-wrap gap-2">
+            <div className="text-blue-900">
+              <strong>Lopende maand {data.current_month.label}</strong>:
+              gefactureerd <strong>{fmtEUR(data.current_month.revenue)}</strong>
+              {data.current_month.pending_recurring > 0 && (
+                <> + nog te factureren recurring <strong className="text-emerald-700">{fmtEUR(data.current_month.pending_recurring)}</strong></>
+              )}
+              {" "}= verwacht <strong>{fmtEUR(data.current_month.revenue + data.current_month.pending_recurring + data.current_month.pending_labor_estimate)}</strong>
+            </div>
+          </div>
+        )}
+
+        {/* Acquisitie + open labor inputs */}
+        <div className="grid md:grid-cols-2 gap-3 rounded-md bg-slate-50 px-3 py-2 text-xs">
+          <label className="flex items-baseline gap-2">
+            <span className="text-slate-600 whitespace-nowrap">Open labor schatting (€):</span>
+            <input
+              type="number" min="0" step="500" value={openLabor}
+              onChange={(e) => setOpenLabor(Math.max(0, parseFloat(e.target.value) || 0))}
+              className="flex-1 rounded border border-slate-300 px-2 py-0.5 text-sm tabular-nums max-w-[140px]"
+              placeholder="0"
+            />
+            <span className="text-[10px] text-slate-400">geboekte uren × tarief uit HaloPSA</span>
+          </label>
+          <label className="flex items-baseline gap-2">
+            <input
+              type="checkbox" checked={includeAcq}
+              onChange={(e) => setIncludeAcq(e.target.checked)}
+            />
+            <span className="text-slate-600">Acquisitie meerekenen</span>
+            <span className="text-[10px] text-slate-400">
+              {data.avg_deals_won_per_month.toFixed(1)} deals/mnd × €{data.avg_deal_amount.toFixed(0)} ×
+              {" "}{(data.acquisition_recurring_fraction * 100).toFixed(0)}% recurring
+              {" "}= <strong>+€{data.acquisition_monthly_uplift.toFixed(0)}/mnd extra</strong>
+            </span>
+          </label>
+        </div>
+
         {/* Target-balk */}
         <div className="space-y-1">
           <div className="flex justify-between text-[11px] text-slate-500">
-            <span>Voortgang naar €1M (lineaire projectie)</span>
+            <span>Voortgang naar €1M</span>
             <span className={met ? "text-emerald-700 font-medium" : "text-rose-700 font-medium"}>
               {met
                 ? `✓ €1M wordt gehaald (+${fmtEUR(-data.target_gap_to_million)})`
@@ -294,35 +371,48 @@ function RevenueGrowthBlock({ data, loading }: { data: GrowthProjection | undefi
 
         {/* Chart */}
         <div className="rounded-md bg-slate-50 p-2">
-          <RevenueChart history={data.months_history} projection={data.months_projection}
-            max={max} targetLine={targetLine} />
+          <RevenueChart
+            history={data.months_history}
+            currentMonth={data.current_month}
+            projection={data.months_projection}
+            max={max}
+            targetLine={targetLine}
+          />
         </div>
 
         <div className="text-[11px] text-slate-500 flex flex-wrap gap-4">
-          <span>Gemiddeld: <strong>{fmtEUR(data.average_per_month)}/mnd</strong></span>
+          <span>Gemiddeld (excl. lopend): <strong>{fmtEUR(data.average_per_month)}/mnd</strong></span>
           <span>Trend: <strong className={data.growth_per_month >= 0 ? "text-emerald-700" : "text-rose-700"}>{data.growth_per_month >= 0 ? "+" : ""}{fmtEUR(data.growth_per_month)}/mnd</strong></span>
-          <span>Maandgemiddelde nodig: <strong>{fmtEUR(83333)}/mnd</strong> voor €1M</span>
+          <span>Nodig voor €1M: <strong>{fmtEUR(83333)}/mnd</strong></span>
         </div>
       </div>
     </section>
   );
 }
 
-function RevenueChart({ history, projection, max, targetLine }: {
+function RevenueChart({ history, currentMonth, projection, max, targetLine }: {
   history: RevenueMonth[];
+  currentMonth: RevenueMonth | null;
   projection: RevenueMonth[];
   max: number;
   targetLine: number;
 }) {
-  const all = [...history, ...projection];
-  const W = 720, H = 200, PADL = 50, PADR = 8, PADT = 22, PADB = 22;
+  const allMonths = [
+    ...history,
+    ...(currentMonth ? [currentMonth] : []),
+    ...projection,
+  ];
+  const W = 720, H = 220, PADL = 50, PADR = 8, PADT = 28, PADB = 22;
   const innerW = W - PADL - PADR, innerH = H - PADT - PADB;
-  const xStep = innerW / Math.max(1, all.length);
-  const xy = (i: number, v: number) => ({
-    x: PADL + i * xStep + xStep / 2,
-    y: PADT + innerH - (max > 0 ? (v / max) * innerH : 0),
-  });
-  const targetY = PADT + innerH - (targetLine / max) * innerH;
+  const xStep = innerW / Math.max(1, allMonths.length);
+
+  // Returns y-pixel voor revenue v, scaled to max
+  const yFor = (v: number) => PADT + innerH - (max > 0 ? (v / max) * innerH : 0);
+  const xCenter = (i: number) => PADL + i * xStep + xStep / 2;
+  const barW = xStep * 0.66;
+
+  const targetY = yFor(targetLine);
+  let xi = 0;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
@@ -339,48 +429,96 @@ function RevenueChart({ history, projection, max, targetLine }: {
           €{Math.round((max * f) / 1000)}k
         </text>
       ))}
-      {/* Target-lijn EUR 83k/mnd */}
+      {/* Target-lijn */}
       <line x1={PADL} x2={W - PADR} y1={targetY} y2={targetY}
         stroke="#dc2626" strokeWidth="1.5" strokeDasharray="5,3" />
       <text x={W - PADR - 4} y={targetY - 3} textAnchor="end" fontSize="9" fill="#dc2626" fontWeight="600">
         €1M doel: €{Math.round(targetLine / 1000)}k/mnd
       </text>
-      {/* werkelijk (blauw) */}
-      {history.map((m, i) => {
-        const p = xy(i, m.revenue);
+
+      {/* werkelijk afgeronde maanden (blauw) */}
+      {history.map((m) => {
+        const cx = xCenter(xi++);
+        const y = yFor(m.revenue);
         return (
-          <rect key={m.label} x={p.x - xStep / 3} y={p.y}
-            width={xStep * 0.66} height={PADT + innerH - p.y}
+          <rect key={m.label} x={cx - barW / 2} y={y}
+            width={barW} height={PADT + innerH - y}
             fill="#3b82f6" rx="1" />
         );
       })}
-      {/* projectie (amber) */}
-      {projection.map((m, i) => {
-        const p = xy(history.length + i, m.revenue);
+
+      {/* lopende maand: blauw onder + emerald (pending) bovenop, gestippelde rand */}
+      {currentMonth && (() => {
+        const cx = xCenter(xi++);
+        const blueH = PADT + innerH - yFor(currentMonth.revenue);
+        const pending = currentMonth.pending_recurring + currentMonth.pending_labor_estimate;
+        const pendingTopY = yFor(currentMonth.revenue + pending);
+        const totalTopY = yFor(currentMonth.revenue + pending);
         return (
-          <rect key={m.label} x={p.x - xStep / 3} y={p.y}
-            width={xStep * 0.66} height={PADT + innerH - p.y}
-            fill="#f59e0b" rx="1" opacity="0.85" />
+          <g key={currentMonth.label}>
+            {/* blauw deel: werkelijk */}
+            <rect x={cx - barW / 2} y={yFor(currentMonth.revenue)}
+              width={barW} height={blueH} fill="#3b82f6" rx="1" />
+            {/* emerald deel: nog te factureren */}
+            {pending > 0 && (
+              <rect x={cx - barW / 2} y={pendingTopY}
+                width={barW} height={yFor(currentMonth.revenue) - pendingTopY}
+                fill="#10b981" opacity="0.85" rx="1" />
+            )}
+            {/* gestippelde rand om hele staaf */}
+            <rect x={cx - barW / 2} y={totalTopY}
+              width={barW} height={PADT + innerH - totalTopY}
+              fill="none" stroke="#0f172a" strokeWidth="1" strokeDasharray="2,2" />
+            {/* "lopend" label */}
+            <text x={cx} y={totalTopY - 4} textAnchor="middle" fontSize="8"
+              fill="#0f172a" fontWeight="600">
+              lopend
+            </text>
+          </g>
+        );
+      })()}
+
+      {/* projectie: amber basis + emerald acquisitie top */}
+      {projection.map((m) => {
+        const cx = xCenter(xi++);
+        const basis = m.revenue - m.acquisition_uplift;
+        const basisY = yFor(basis);
+        const totalY = yFor(m.revenue);
+        return (
+          <g key={m.label}>
+            <rect x={cx - barW / 2} y={basisY}
+              width={barW} height={PADT + innerH - basisY}
+              fill="#f59e0b" opacity="0.85" rx="1" />
+            {m.acquisition_uplift > 0 && (
+              <rect x={cx - barW / 2} y={totalY}
+                width={barW} height={basisY - totalY}
+                fill="#10b981" opacity="0.85" rx="1" />
+            )}
+          </g>
         );
       })}
+
       {/* X labels */}
-      {all.map((m, i) => {
-        if (i % 2 !== 0 && all.length > 14) return null;
-        const p = xy(i, 0);
+      {allMonths.map((m, i) => {
+        if (i % 2 !== 0 && allMonths.length > 14) return null;
+        const x = xCenter(i);
         return (
-          <text key={m.label} x={p.x} y={H - 6} textAnchor="middle" fontSize="9" fill="#64748b">
+          <text key={m.label} x={x} y={H - 6} textAnchor="middle" fontSize="9" fill="#64748b">
             {m.label.slice(2)}
           </text>
         );
       })}
+
       {/* Legend */}
-      <g transform={`translate(${PADL + 10}, 6)`}>
+      <g transform={`translate(${PADL + 4}, 6)`}>
         <rect width="10" height="10" fill="#3b82f6" rx="1" />
         <text x="14" y="9" fontSize="10" fill="#374151">werkelijk</text>
-        <rect x="80" width="10" height="10" fill="#f59e0b" rx="1" opacity="0.85" />
-        <text x="94" y="9" fontSize="10" fill="#374151">projectie</text>
-        <line x1="160" x2="180" y1="5" y2="5" stroke="#dc2626" strokeWidth="1.5" strokeDasharray="3,2" />
-        <text x="184" y="9" fontSize="10" fill="#374151">€1M doel</text>
+        <rect x="76" width="10" height="10" fill="#10b981" rx="1" opacity="0.85" />
+        <text x="90" y="9" fontSize="10" fill="#374151">pending / acquisitie</text>
+        <rect x="190" width="10" height="10" fill="#f59e0b" rx="1" opacity="0.85" />
+        <text x="204" y="9" fontSize="10" fill="#374151">projectie basis</text>
+        <line x1="280" x2="300" y1="5" y2="5" stroke="#dc2626" strokeWidth="1.5" strokeDasharray="3,2" />
+        <text x="304" y="9" fontSize="10" fill="#374151">€1M doel</text>
       </g>
     </svg>
   );
