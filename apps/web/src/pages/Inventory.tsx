@@ -17,8 +17,17 @@ type Asset = {
   updated_at: string;
 };
 
+type HaloPSAAgent = {
+  id: number;
+  name: string;
+  email: string | null;
+  inactive: boolean;
+};
+
 type Employee = {
   id: string;
+  halopsa_agent_id: number | null;
+  halopsa_agent_name: string | null;
   full_name: string;
   email: string | null;
   phone: string | null;
@@ -221,6 +230,9 @@ function EmployeeDetailPanel({ employeeId, onDeleted }: {
       </div>
 
       {e.notes && <div className="px-4 py-2 text-xs text-slate-600 bg-amber-50 border-b border-amber-100">{e.notes}</div>}
+
+      {/* HaloPSA agent matching */}
+      <HaloPSAMatchPanel employee={e} />
 
       <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
         <div className="text-sm font-medium">Assets ({e.assets.length})</div>
@@ -489,6 +501,100 @@ function AssetForm({ employeeId, asset, onCancel, onSaved }: {
           {mut.isPending ? "Opslaan…" : "Opslaan"}
         </button>
       </div>
+    </div>
+  );
+}
+
+
+function HaloPSAMatchPanel({ employee }: { employee: EmployeeDetail }) {
+  const qc = useQueryClient();
+  const agentsQ = useQuery<HaloPSAAgent[]>({
+    queryKey: ["/inventory/halopsa-agents"],
+    queryFn: () => api<HaloPSAAgent[]>("/inventory/halopsa-agents"),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const linkMut = useMutation({
+    mutationFn: (agentId: number | null) =>
+      api(`/inventory/employees/${employee.id}/halopsa-link`, {
+        method: "PUT",
+        body: JSON.stringify({ halopsa_agent_id: agentId }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/inventory/employees", employee.id] });
+      qc.invalidateQueries({ queryKey: ["/inventory/employees"] });
+    },
+  });
+
+  // Auto-suggest: zoek agent met match op naam (case-insensitive, beide kanten op)
+  const agents = agentsQ.data || [];
+  const empNameLower = employee.full_name.toLowerCase();
+  const suggested = agents.find((a) => {
+    const aLower = a.name.toLowerCase();
+    return aLower.includes(empNameLower) || empNameLower.includes(aLower.split(" | ")[0]);
+  });
+
+  return (
+    <div className="px-4 py-3 border-b border-slate-200 bg-amber-50/30">
+      <div className="text-[10px] uppercase tracking-wider text-slate-600 font-semibold mb-2">
+        HaloPSA-agent voor verlof-sync
+      </div>
+      {employee.halopsa_agent_id ? (
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="text-sm">
+            <span className="text-emerald-700">✓ Gekoppeld:</span>{" "}
+            <strong>{employee.halopsa_agent_name}</strong>
+            <span className="text-xs text-slate-500 ml-2">(id {employee.halopsa_agent_id})</span>
+          </div>
+          <button
+            onClick={() => linkMut.mutate(null)}
+            disabled={linkMut.isPending}
+            className="text-xs px-2 py-0.5 rounded ring-1 ring-slate-300 hover:bg-slate-100"
+          >
+            Ontkoppelen
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {agentsQ.isLoading && (
+            <div className="text-xs text-slate-500">Agents laden…</div>
+          )}
+          {agentsQ.data && (
+            <>
+              <select
+                onChange={(ev) => {
+                  const v = ev.target.value;
+                  if (v) linkMut.mutate(Number(v));
+                }}
+                className="w-full text-sm rounded border border-slate-300 px-2 py-1"
+                defaultValue=""
+                disabled={linkMut.isPending}
+              >
+                <option value="">— Kies HaloPSA-agent —</option>
+                {suggested && (
+                  <option value={suggested.id}>
+                    💡 {suggested.name} (suggestie op naam)
+                  </option>
+                )}
+                <optgroup label="Alle agents">
+                  {agents
+                    .filter((a) => !suggested || a.id !== suggested.id)
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                        {a.inactive ? " (inactief)" : ""}
+                        {a.email ? ` — ${a.email}` : ""}
+                      </option>
+                    ))}
+                </optgroup>
+              </select>
+              <div className="text-xs text-slate-500">
+                Nodig voor verlof-doorpush naar Outlook-agenda. Niet alle medewerkers hoeven gekoppeld te zijn — zonder match wordt verlof voor die persoon gewoon overgeslagen.
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

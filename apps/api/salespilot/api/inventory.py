@@ -66,6 +66,8 @@ class EmployeeOut(EmployeeIn):
     id: UUID
     nmbrs_employee_id: str | None
     nmbrs_company_id: str | None
+    halopsa_agent_id: int | None
+    halopsa_agent_name: str | None
     asset_count: int = 0
     created_at: datetime
     updated_at: datetime
@@ -85,6 +87,8 @@ def _to_employee_out(e: Employee, asset_count: int = 0) -> EmployeeOut:
         started_at=e.started_at, ended_at=e.ended_at, notes=e.notes,
         nmbrs_employee_id=e.nmbrs_employee_id,
         nmbrs_company_id=e.nmbrs_company_id,
+        halopsa_agent_id=e.halopsa_agent_id,
+        halopsa_agent_name=e.halopsa_agent_name,
         asset_count=asset_count,
         created_at=e.created_at, updated_at=e.updated_at,
     )
@@ -267,6 +271,120 @@ async def delete_asset(
     )
     if r.rowcount == 0:
         raise HTTPException(status_code=404, detail="asset not found")
+
+
+
+
+
+# ----- HaloPSA agent matching ----------------------------------------
+
+
+class HaloPSAAgent(BaseModel):
+    id: int
+    name: str
+    email: str | None
+    inactive: bool = False
+
+
+@router.get("/halopsa-agents", response_model=list[HaloPSAAgent])
+async def list_halopsa_agents(auth: CurrentAuth, db: Db) -> list[HaloPSAAgent]:
+    """Lijst alle HaloPSA agents incl. disabled, voor matching-dropdown."""
+    from salespilot.models.integrations import Integration
+    from salespilot.integrations.halopsa import HaloPSAClient, HaloPSACredentials
+
+    integ = (
+        await db.execute(
+            select(Integration).where(Integration.kind == "halopsa")
+        )
+    ).scalar_one_or_none()
+    if not integ:
+        raise HTTPException(status_code=400, detail="HaloPSA not configured")
+
+    cfg = integ.config_json
+    creds = HaloPSACredentials(
+        base_url=cfg.get("base_url", ""),
+        client_id=cfg.get("client_id", ""),
+        client_secret=cfg.get("client_secret", ""),
+        tenant_id=cfg.get("tenant_id"),
+    )
+
+    agents: list[HaloPSAAgent] = []
+    async with HaloPSAClient(creds) as c:
+        # Met disabled=true krijgen we alle agents
+        d = await c._request("GET", "/api/Agent",
+                             params={"count": 200, "includedisabled": "true"})
+        if isinstance(d, list):
+            for a in d:
+                aid = a.get("id")
+                if aid is None or aid == 1:  # skip 'Unassigned'
+                    continue
+                agents.append(HaloPSAAgent(
+                    id=aid,
+                    name=a.get("name") or a.get("namewithinactive") or "",
+                    email=a.get("email") or None,
+                    inactive=bool(a.get("inactive") or False),
+                ))
+    agents.sort(key=lambda x: x.name.lower())
+    return agents
+
+
+class HaloPSALinkIn(BaseModel):
+    halopsa_agent_id: int | None  # None = ontkoppelen
+
+
+@router.put("/employees/{employee_id}/halopsa-link", response_model=EmployeeOut)
+async def link_halopsa_agent(
+    auth: CurrentAuth, db: Db, employee_id: UUID, data: HaloPSALinkIn,
+) -> EmployeeOut:
+    """Koppel of ontkoppel een HaloPSA-agent aan een medewerker."""
+    e = (
+        await db.execute(select(Employee).where(Employee.id == employee_id))
+    ).scalar_one_or_none()
+    if e is None:
+        raise HTTPException(status_code=404, detail="employee not found")
+
+    if data.halopsa_agent_id is None:
+        e.halopsa_agent_id = None
+        e.halopsa_agent_name = None
+    else:
+        # Resolve naam via HaloPSA
+        from salespilot.models.integrations import Integration
+        from salespilot.integrations.halopsa import HaloPSAClient, HaloPSACredentials
+        integ = (
+            await db.execute(
+                select(Integration).where(Integration.kind == "halopsa")
+            )
+        ).scalar_one_or_none()
+        if not integ:
+            raise HTTPException(status_code=400, detail="HaloPSA not configured")
+        cfg = integ.config_json
+        creds = HaloPSACredentials(
+            base_url=cfg.get("base_url", ""),
+            client_id=cfg.get("client_id", ""),
+            client_secret=cfg.get("client_secret", ""),
+            tenant_id=cfg.get("tenant_id"),
+        )
+        async with HaloPSAClient(creds) as c:
+            d = await c._request("GET", "/api/Agent",
+                                 params={"count": 200, "includedisabled": "true"})
+        agent = next(
+            (a for a in (d if isinstance(d, list) else []) if a.get("id") == data.halopsa_agent_id),
+            None,
+        )
+        if agent is None:
+            raise HTTPException(status_code=404, detail="HaloPSA agent niet gevonden")
+        e.halopsa_agent_id = data.halopsa_agent_id
+        e.halopsa_agent_name = agent.get("name") or agent.get("namewithinactive") or ""
+
+    e.updated_at = datetime.now(UTC)
+    await db.flush()
+    count = (
+        await db.execute(
+            select(func.count(EmployeeAsset.id))
+            .where(EmployeeAsset.employee_id == employee_id)
+        )
+    ).scalar_one()
+    return _to_employee_out(e, int(count or 0))
 
 
 # ----- NMBRS import (placeholder) ------------------------------------
