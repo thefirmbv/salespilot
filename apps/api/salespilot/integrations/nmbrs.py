@@ -33,15 +33,18 @@ from salespilot.models.integrations import Integration
 IDENTITY_BASE = "https://identityservice.nmbrs.com"
 API_BASE = "https://api.nmbrsapp.com"
 
-# Default scopes voor onze use case
+# Default scopes -- gevalideerd tegen developer.nmbrs.com/docs/auth/scopes
+# Bestaande scopes alleen (anders -> invalid_scope error op consent).
 DEFAULT_SCOPES = [
-    "openid",
-    "offline_access",         # refresh_token
-    "employee.info.read",     # naam + email medewerkers
-    "employee.absence.read",  # verlof
-    "company.info.read",      # bedrijfsstructuur
-    "user.info",              # current user info
+    "offline_access",                 # MANDATORY voor refresh_token
+    "employee.info.read",             # naam + email medewerkers
+    "employee.employment.read",       # contract + rooster (verlof zit hier mogelijk in)
+    "company.info.read",              # bedrijfsstructuur
 ]
+# Niet bestaande / verwijderd:
+#   - openid                  : niet in NMBRS scope-lijst
+#   - employee.absence.read   : bestaat niet; verlof via employment of apart endpoint
+#   - user.info               : niet in scope-lijst (komt mogelijk gratis bij offline_access)
 
 
 class NmbrsConfigError(Exception):
