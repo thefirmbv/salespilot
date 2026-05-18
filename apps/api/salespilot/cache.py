@@ -114,3 +114,100 @@ async def invalidate_prefix(prefix: str) -> int:
         await r.delete(key)
         deleted += 1
     return deleted
+
+
+# ----------------------------------------------------------------------
+# Pre-warming bij login
+# ----------------------------------------------------------------------
+
+
+async def prewarm_financieel(org_id: Any) -> dict[str, Any]:
+    """Pre-warm de Financieel dashboard cache voor een org. Bedoeld
+    om bij login als BackgroundTask te starten zodat de pagina warm
+    is wanneer de gebruiker er heen navigeert.
+
+    Skip-logica per endpoint: als de cache nog warm is voor die exacte
+    key, doen we niets. Anders triggeren we de berekening.
+
+    Returns: dict met per endpoint 'hit'/'warmed'/'error'.
+    """
+    from salespilot.db import tenant_session
+    from salespilot.api.financieel import (
+        recurring_summary, helpdesk_trend, revenue_growth,
+        top_clients_actual, HELPDESK_ACCOUNTSID, MODERN_WORK_ACCOUNTSID,
+    )
+
+    # Stub auth-object met alleen wat de endpoints lezen (org_id)
+    class _PseudoAuth:
+        def __init__(self, oid):
+            self.org_id = oid
+            self.user_id = None
+
+    auth = _PseudoAuth(org_id)
+    status: dict[str, str] = {}
+
+    # Per endpoint: probeer cache hit first; zo niet, compute (= vult cache)
+    async with tenant_session(org_id) as db:
+        # 1. recurring-summary
+        key = make_cache_key("financieel:recurring", org_id, {})
+        if await cache_get(key) is None:
+            try:
+                await recurring_summary(auth=auth, db=db)
+                status["recurring-summary"] = "warmed"
+            except Exception as e:
+                status["recurring-summary"] = f"error: {str(e)[:60]}"
+        else:
+            status["recurring-summary"] = "already-hot"
+
+        # 2. helpdesk-trend (8041, 12 mnd)
+        key = make_cache_key("financieel:account-trend", org_id, {"months": 12, "accountsid": HELPDESK_ACCOUNTSID})
+        if await cache_get(key) is None:
+            try:
+                await helpdesk_trend(auth=auth, db=db, months=12, accountsid=HELPDESK_ACCOUNTSID)
+                status["helpdesk-trend"] = "warmed"
+            except Exception as e:
+                status["helpdesk-trend"] = f"error: {str(e)[:60]}"
+        else:
+            status["helpdesk-trend"] = "already-hot"
+
+        # 3. account-trend Modern Work (8044, 12 mnd)
+        key = make_cache_key("financieel:account-trend", org_id, {"months": 12, "accountsid": MODERN_WORK_ACCOUNTSID})
+        if await cache_get(key) is None:
+            try:
+                await helpdesk_trend(auth=auth, db=db, months=12, accountsid=MODERN_WORK_ACCOUNTSID)
+                status["modern-work-trend"] = "warmed"
+            except Exception as e:
+                status["modern-work-trend"] = f"error: {str(e)[:60]}"
+        else:
+            status["modern-work-trend"] = "already-hot"
+
+        # 4. revenue-growth (default params)
+        key = make_cache_key(
+            "financieel:revenue-growth", org_id,
+            {"months": 24, "open_labor": 0.0, "acq_frac": 0.5, "include_acq": True},
+        )
+        if await cache_get(key) is None:
+            try:
+                await revenue_growth(
+                    auth=auth, db=db,
+                    months=24, open_labor_estimate=0.0,
+                    acquisition_recurring_fraction=0.5, include_acquisition=True,
+                )
+                status["revenue-growth"] = "warmed"
+            except Exception as e:
+                status["revenue-growth"] = f"error: {str(e)[:60]}"
+        else:
+            status["revenue-growth"] = "already-hot"
+
+        # 5. top-clients-actual (12 mnd, top 10)
+        key = make_cache_key("financieel:top-clients-actual", org_id, {"months": 12, "limit": 10})
+        if await cache_get(key) is None:
+            try:
+                await top_clients_actual(auth=auth, db=db, months=12, limit=10)
+                status["top-clients-actual"] = "warmed"
+            except Exception as e:
+                status["top-clients-actual"] = f"error: {str(e)[:60]}"
+        else:
+            status["top-clients-actual"] = "already-hot"
+
+    return status

@@ -11,6 +11,8 @@ from re import sub as re_sub
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+
+from salespilot.cache import prewarm_financieel
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -121,7 +123,10 @@ async def register(data: RegisterRequest, db: DbNoTenant) -> TokenPair:
 
 
 @router.post("/login", response_model=TokenPair)
-async def login(data: LoginRequest, db: DbNoTenant) -> TokenPair:
+async def login(
+    data: LoginRequest, db: DbNoTenant,
+    background_tasks: BackgroundTasks,
+) -> TokenPair:
     email = data.email.lower()
     user = (
         await db.execute(select(User).where(User.email == email))
@@ -141,6 +146,14 @@ async def login(data: LoginRequest, db: DbNoTenant) -> TokenPair:
 
     user.last_login_at = datetime.now(UTC)
     org_id = membership.org_id if membership else None
+
+    # Pre-warm Financieel-cache in achtergrond -- gebruiker merkt geen
+    # extra latentie op login, en zodra ze naar /financieel/dashboard
+    # navigeren is alles warm. Skip-logica binnen prewarm_financieel
+    # voorkomt overbodig werk als cache nog vers is.
+    if org_id is not None:
+        background_tasks.add_task(prewarm_financieel, org_id)
+
     return _issue_pair(user.id, org_id)
 
 
