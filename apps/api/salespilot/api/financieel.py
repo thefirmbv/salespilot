@@ -35,6 +35,7 @@ from salespilot.models.integrations import Integration
 from salespilot.integrations.halopsa import (
     HaloPSAClient, HaloPSACredentials, HaloPSAError,
 )
+from salespilot.cache import make_cache_key, cache_get, cache_set, cache_get_list
 
 
 router = APIRouter(prefix="/financieel", tags=["financieel"])
@@ -103,11 +104,12 @@ class RecurringSummary(BaseModel):
 
 @router.get("/recurring-summary", response_model=RecurringSummary)
 async def recurring_summary(auth: CurrentAuth, db: Db) -> RecurringSummary:
-    """Projecteer alle huidige recurring-invoices over 12/24/36 mnd.
+    """Projecteer alle huidige recurring-invoices over 12/24/36 mnd."""
+    cache_key = make_cache_key("financieel:recurring", auth.org_id, {})
+    cached = await cache_get(cache_key, model=RecurringSummary)
+    if cached:
+        return cached
 
-    Per line: total_price (= bedrag per factuur-cycle) × cycles-per-jaar.
-    Som over alle lines + alle invoices = jaaromzet uit recurring.
-    """
     client = await _halopsa_client(db)
     try:
         async with client as c:
@@ -154,7 +156,7 @@ async def recurring_summary(auth: CurrentAuth, db: Db) -> RecurringSummary:
         for n, v in sorted(by_client.items(), key=lambda x: -x[1])[:10]
     ]
 
-    return RecurringSummary(
+    result = RecurringSummary(
         invoice_count=len([i for i in invs if not i.get("disabled")]),
         line_count=line_count,
         annual_revenue=round(annual, 2),
@@ -163,6 +165,8 @@ async def recurring_summary(auth: CurrentAuth, db: Db) -> RecurringSummary:
         by_period=by_period_str,
         top_clients=top_clients,
     )
+    await cache_set(cache_key, result, ttl=300)
+    return result
 
 
 # ----------------------------------------------------------------------
@@ -205,12 +209,12 @@ async def helpdesk_trend(
     months: int = Query(12, ge=1, le=36),
     accountsid: str = Query(HELPDESK_ACCOUNTSID),
 ) -> HelpdeskTrend:
-    """Helpdesk (boekingscode 8041 ~ HaloPSA accountsid 153) per maand
-    over de afgelopen N maanden. Plus lineaire trend-projectie.
+    """Helpdesk (boekingscode 8041 ~ HaloPSA accountsid 153) per maand."""
+    cache_key = make_cache_key("financieel:account-trend", auth.org_id, {"months": months, "accountsid": accountsid})
+    cached = await cache_get(cache_key, model=HelpdeskTrend)
+    if cached:
+        return cached
 
-    De accountsid is configurable mocht jullie boekhouding ooit een
-    andere code aan helpdesk koppelen.
-    """
     client = await _halopsa_client(db)
     now = datetime.now(UTC)
     # We pakken ietsje meer dan `months` (1 maand extra buffer voor partial)
@@ -302,7 +306,7 @@ async def helpdesk_trend(
     total = sum(r.revenue for r in rows)
     proj_total = sum(p.revenue for p in projection)
 
-    return HelpdeskTrend(
+    result = HelpdeskTrend(
         accountsid=accountsid,
         months=rows,
         average=round(avg, 2),
@@ -311,6 +315,8 @@ async def helpdesk_trend(
         total_last_12=round(total, 2),
         total_projected_next_12=round(proj_total, 2),
     )
+    await cache_set(cache_key, result, ttl=300)
+    return result
 
 
 
@@ -391,17 +397,20 @@ async def revenue_growth(
     ),
     include_acquisition: bool = Query(True),
 ) -> GrowthProjection:
-    """Totale omzet per maand + EUR 1M target tracking.
+    """Totale omzet per maand + EUR 1M target tracking."""
+    cache_key = make_cache_key(
+        "financieel:revenue-growth", auth.org_id,
+        {
+            "months": months,
+            "open_labor": open_labor_estimate,
+            "acq_frac": acquisition_recurring_fraction,
+            "include_acq": include_acquisition,
+        },
+    )
+    cached = await cache_get(cache_key, model=GrowthProjection)
+    if cached:
+        return cached
 
-    KRITISCH: lopende maand wordt apart behandeld omdat:
-      - Recurring voor deze maand soms nog niet verstuurd is
-      - Open labor in HaloPSA nog moet worden gefactureerd
-      Anders zou de trend-regressie op een halve maand
-      gefit worden -> projectie loopt structureel te laag.
-
-    Acquisitie: gemiddeld # won-deals/mnd × gem amount × recurring-
-    fractie wordt als 'uplift' bovenop toekomstige maanden gerekend.
-    """
     halo = await _halopsa_client(db)
     now = datetime.now(UTC)
     date_from = (now - timedelta(days=months * 32)).strftime("%Y-%m-%d")
@@ -594,7 +603,7 @@ async def revenue_growth(
     projection_full_year_with_acquisition = ytd + proj_curr_year_acquisition
 
     target = 1_000_000.0
-    return GrowthProjection(
+    result = GrowthProjection(
         months_history=history,
         current_month=current_month,
         months_projection=projection,
@@ -614,6 +623,8 @@ async def revenue_growth(
         acquisition_recurring_fraction=acquisition_recurring_fraction,
         acquisition_monthly_uplift=round(acq_monthly_uplift, 2),
     )
+    await cache_set(cache_key, result, ttl=300)
+    return result
 
 # ----------------------------------------------------------------------
 # Top klanten op WERKELIJKE omzet (niet recurring projectie)
@@ -632,9 +643,15 @@ async def top_clients_actual(
     months: int = Query(12, ge=1, le=36),
     limit: int = Query(15, ge=1, le=50),
 ) -> list[ClientRevenueRow]:
-    """Top klanten op WERKELIJK gefactureerde omzet (posted invoices).
-    Verschilt van /recurring-summary top_clients: project-werk + eenmalig
-    werk wordt hier wel meegenomen, daar niet."""
+    """Top klanten op WERKELIJK gefactureerde omzet (posted invoices)."""
+    cache_key = make_cache_key(
+        "financieel:top-clients-actual", auth.org_id,
+        {"months": months, "limit": limit},
+    )
+    cached = await cache_get_list(cache_key, ClientRevenueRow)
+    if cached is not None:
+        return cached
+
     client = await _halopsa_client(db)
     now = datetime.now(UTC)
     date_from = (now - timedelta(days=months * 32)).strftime("%Y-%m-%d")
@@ -679,7 +696,9 @@ async def top_clients_actual(
         for n, v in by_client.items()
     ]
     rows.sort(key=lambda r: -r.revenue)
-    return rows[:limit]
+    result = rows[:limit]
+    await cache_set(cache_key, result, ttl=300)
+    return result
 
 
 # ----------------------------------------------------------------------
@@ -699,8 +718,14 @@ async def list_account_codes(
     auth: CurrentAuth, db: Db,
     months: int = Query(12, ge=1, le=36),
 ) -> list[AccountCodeRow]:
-    """Welke account-codes komen voor in de afgelopen N maanden, met
-    omzet + sample item-naam. Voor de "ander code kiezen" dropdown."""
+    """Welke account-codes komen voor in de afgelopen N maanden."""
+    cache_key = make_cache_key(
+        "financieel:account-codes", auth.org_id, {"months": months},
+    )
+    cached = await cache_get_list(cache_key, AccountCodeRow)
+    if cached is not None:
+        return cached
+
     client = await _halopsa_client(db)
     now = datetime.now(UTC)
     date_from = (now - timedelta(days=months * 32)).strftime("%Y-%m-%d")
@@ -741,4 +766,5 @@ async def list_account_codes(
         for ac, v in by_acct.items()
     ]
     rows.sort(key=lambda r: -r.revenue_last_12m)
+    await cache_set(cache_key, rows, ttl=600)
     return rows
