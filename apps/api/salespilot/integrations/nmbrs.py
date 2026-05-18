@@ -203,25 +203,60 @@ class NmbrsClient:
         r.raise_for_status()
         return r.json()
 
-    async def companies(self) -> list[dict]:
-        """Bedrijven waar deze user toegang toe heeft."""
-        return await self.get("/api/companies")
+    async def _paginated(self, path: str, params: dict | None = None) -> list[dict]:
+        """NMBRS REST API wrapt alle list-responses in {pagination, data}.
+        Pagineert automatisch door alle pages heen."""
+        results: list[dict] = []
+        page = 1
+        while True:
+            p = dict(params or {})
+            p["pageNumber"] = page
+            p.setdefault("pageSize", 100)
+            r = await self.get(path, params=p)
+            if not isinstance(r, dict):
+                # Onverwacht: directe lijst zonder envelope
+                if isinstance(r, list):
+                    return r
+                return []
+            results.extend(r.get("data") or [])
+            pag = r.get("pagination") or {}
+            total_pages = pag.get("totalPages") or 1
+            if page >= total_pages:
+                break
+            page += 1
+        return results
 
-    async def user_info(self) -> dict:
-        """Wie ben ik (van NMBRS' kant gezien)."""
-        return await self.get("/api/user/info")
+    async def companies(self) -> list[dict]:
+        """Bedrijven waar deze user toegang toe heeft.
+        Returnt list van dicts met {companyId, number, name, debtorId}."""
+        return await self._paginated("/api/companies")
 
     async def employees(self, company_id: str) -> list[dict]:
-        """Medewerkers van een bedrijf."""
-        return await self.get(f"/api/companies/{company_id}/employees")
+        """Medewerkers van een bedrijf -- basic info per employee."""
+        return await self._paginated(f"/api/companies/{company_id}/employees")
 
-    async def employee_personal_info(self, employee_id: str) -> dict:
-        """Persoonlijke info (naam, email) voor één medewerker."""
-        return await self.get(f"/api/employees/{employee_id}/personalInfo")
+    async def employee_detail(self, employee_id: str) -> dict | None:
+        """Volledig profiel van één medewerker: personalInfo + function +
+        department + manager + address. Returnt None bij 404."""
+        try:
+            r = await self.get(f"/api/employees/{employee_id}")
+        except Exception:
+            return None
+        if isinstance(r, dict):
+            data = r.get("data") or []
+            if data:
+                return data[0]
+        return None
 
     async def employee_absences(
         self, employee_id: str, year: int | None = None,
     ) -> list[dict]:
-        """Verlof voor één medewerker."""
-        params = {"year": year} if year else None
-        return await self.get(f"/api/employees/{employee_id}/absences", params=params)
+        """Verlof voor één medewerker. Mogelijk niet beschikbaar in
+        huidige scope -- returnt [] bij 403/404."""
+        try:
+            params = {"year": year} if year else None
+            return await self._paginated(
+                f"/api/employees/{employee_id}/absences", params=params,
+            )
+        except Exception:
+            return []

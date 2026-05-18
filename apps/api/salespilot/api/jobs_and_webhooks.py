@@ -1163,32 +1163,41 @@ async def nmbrs_tick(
                 continue
 
             for company in companies:
-                cid = str(company.get("id") or company.get("companyId") or "")
+                cid = company.get("companyId") or company.get("id")
                 if not cid:
                     continue
+                cid = str(cid)
                 try:
                     employees_raw = await client.employees(cid)
                 except Exception:
                     continue
                 for emp in employees_raw:
-                    nmbrs_emp_id = str(emp.get("id") or emp.get("employeeId") or "")
+                    nmbrs_emp_id = emp.get("employeeId") or emp.get("id")
                     if not nmbrs_emp_id:
                         continue
-                    try:
-                        pi = await client.employee_personal_info(nmbrs_emp_id)
-                    except Exception:
-                        continue
-                    first = (pi.get("firstName") or "").strip()
-                    last = (pi.get("lastName") or "").strip()
-                    prefix = (pi.get("prefix") or "").strip()
-                    full = " ".join(p for p in [first, prefix, last] if p) or (
-                        emp.get("displayName") or ""
-                    )
-                    email = (
-                        pi.get("emailWork") or pi.get("emailPrivate")
-                        or emp.get("email") or ""
-                    ).strip().lower() or None
+                    nmbrs_emp_id = str(nmbrs_emp_id)
+                    basic = emp.get("employeeBasicInfo") or {}
+                    first = (basic.get("firstName") or "").strip()
+                    last = (basic.get("lastName") or "").strip()
+                    prefix = (basic.get("prefix") or "").strip()
+                    email = None
+                    role = None
+                    detail = await client.employee_detail(nmbrs_emp_id)
+                    if detail:
+                        pi = detail.get("personalInfo") or {}
+                        contact = pi.get("contactInfo") or {}
+                        email = (
+                            contact.get("businessEmail") or contact.get("privateEmail") or ""
+                        ).strip().lower() or None
+                        bi = pi.get("basicInfo") or {}
+                        first = (bi.get("firstName") or first or "").strip()
+                        last = (bi.get("lastName") or last or "").strip()
+                        prefix = (bi.get("prefix") or prefix or "").strip()
+                        fn = detail.get("function") or {}
+                        if isinstance(fn, dict):
+                            role = (fn.get("description") or fn.get("name") or "").strip() or None
 
+                    full = " ".join(p for p in [first, prefix, last] if p)
                     if not full:
                         skipped += 1
                         continue
@@ -1210,6 +1219,8 @@ async def nmbrs_tick(
                             existing.email = email; changed = True
                         if existing.nmbrs_company_id != cid:
                             existing.nmbrs_company_id = cid; changed = True
+                        if role and not existing.role:
+                            existing.role = role; changed = True
                         if changed:
                             existing.updated_at = now
                             updated += 1
@@ -1218,7 +1229,7 @@ async def nmbrs_tick(
                     else:
                         db.add(Employee(
                             id=uuid4(), org_id=org.id,
-                            full_name=full, email=email, status="active",
+                            full_name=full, email=email, role=role, status="active",
                             nmbrs_employee_id=nmbrs_emp_id,
                             nmbrs_company_id=cid,
                             created_at=now, updated_at=now,

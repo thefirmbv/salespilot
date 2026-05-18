@@ -187,36 +187,47 @@ async def sync_employees(auth: CurrentAuth, db: Db) -> SyncResult:
     created = updated = unchanged = skipped = 0
 
     for company in companies:
-        company_id = str(company.get("id") or company.get("companyId") or "")
+        company_id = company.get("companyId") or company.get("id")
         if not company_id:
             continue
+        company_id = str(company_id)
 
         try:
             employees_raw = await client.employees(company_id)
-        except Exception as e:
-            # Een company kan no-access geven; log + skip
+        except Exception:
             continue
 
         for emp in employees_raw:
-            nmbrs_emp_id = str(emp.get("id") or emp.get("employeeId") or "")
+            nmbrs_emp_id = emp.get("employeeId") or emp.get("id")
             if not nmbrs_emp_id:
                 continue
+            nmbrs_emp_id = str(nmbrs_emp_id)
 
-            # Personal info ophalen voor naam + email
-            try:
-                pi = await client.employee_personal_info(nmbrs_emp_id)
-            except Exception:
-                continue
+            # NMBRS basic info via employee-list (employeeBasicInfo) of detail
+            basic = emp.get("employeeBasicInfo") or {}
+            first = (basic.get("firstName") or "").strip()
+            last = (basic.get("lastName") or "").strip()
+            prefix = (basic.get("prefix") or "").strip()
 
-            # Naam-velden in NMBRS REST: firstName, lastName, prefix
-            first = (pi.get("firstName") or "").strip()
-            last = (pi.get("lastName") or "").strip()
-            prefix = (pi.get("prefix") or "").strip()
-            full = " ".join(p for p in [first, prefix, last] if p) or (
-                emp.get("displayName") or "")
-            email = (pi.get("emailWork") or pi.get("emailPrivate")
-                     or emp.get("email") or "").strip().lower() or None
+            # Voor email moeten we de detail-call doen
+            email = None
+            role = None
+            detail = await client.employee_detail(nmbrs_emp_id)
+            if detail:
+                pi = detail.get("personalInfo") or {}
+                contact = pi.get("contactInfo") or {}
+                email = (contact.get("businessEmail") or contact.get("privateEmail") or "").strip().lower() or None
+                # Naam ook uit detail (heeft betrouwbaardere data)
+                bi = pi.get("basicInfo") or {}
+                first = (bi.get("firstName") or first or "").strip()
+                last = (bi.get("lastName") or last or "").strip()
+                prefix = (bi.get("prefix") or prefix or "").strip()
+                # Functie ook ophalen
+                fn = detail.get("function") or {}
+                if isinstance(fn, dict):
+                    role = (fn.get("description") or fn.get("name") or "").strip() or None
 
+            full = " ".join(p for p in [first, prefix, last] if p)
             if not full:
                 skipped += 1
                 continue
@@ -233,14 +244,15 @@ async def sync_employees(auth: CurrentAuth, db: Db) -> SyncResult:
             if existing:
                 changed = False
                 if existing.full_name != full:
-                    existing.full_name = full
-                    changed = True
+                    existing.full_name = full; changed = True
                 if email and existing.email != email:
-                    existing.email = email
-                    changed = True
+                    existing.email = email; changed = True
                 if existing.nmbrs_company_id != company_id:
-                    existing.nmbrs_company_id = company_id
-                    changed = True
+                    existing.nmbrs_company_id = company_id; changed = True
+                # role alleen overschrijven als nog leeg (eindgebruiker
+                # blijft eigenaar als die het zelf heeft ingevuld)
+                if role and not existing.role:
+                    existing.role = role; changed = True
                 if changed:
                     existing.updated_at = now
                     updated += 1
@@ -249,7 +261,7 @@ async def sync_employees(auth: CurrentAuth, db: Db) -> SyncResult:
             else:
                 db.add(Employee(
                     id=uuid4(), org_id=auth.org_id,
-                    full_name=full, email=email,
+                    full_name=full, email=email, role=role,
                     status="active",
                     nmbrs_employee_id=nmbrs_emp_id,
                     nmbrs_company_id=company_id,
