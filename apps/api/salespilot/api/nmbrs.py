@@ -72,12 +72,18 @@ async def nmbrs_status(auth: CurrentAuth, db: Db) -> NmbrsStatus:
     )
 
 
-@router.get("/oauth/start")
-async def oauth_start(auth: CurrentAuth, db: Db) -> RedirectResponse:
-    """Stuur de gebruiker naar NMBRS consent-pagina.
+class OAuthStartResponse(BaseModel):
+    authorize_url: str
 
-    State-param bevat org_id zodat we na callback weten welke
-    integration-row te updaten.
+
+@router.get("/oauth/start", response_model=OAuthStartResponse)
+async def oauth_start(auth: CurrentAuth, db: Db) -> OAuthStartResponse:
+    """Returnt de NMBRS consent-URL. Frontend doet zelf window.location.
+
+    Reden voor JSON i.p.v. directe redirect: <a href> in browser stuurt
+    geen Authorization-header mee, dus de redirect-route geeft
+    'missing authorization'. Frontend pakt URL via fetch (met token)
+    en zet daarna window.location.
     """
     integ = (
         await db.execute(select(Integration).where(Integration.kind == "nmbrs"))
@@ -88,7 +94,7 @@ async def oauth_start(auth: CurrentAuth, db: Db) -> RedirectResponse:
         url = build_authorize_url(integ, state=str(auth.org_id))
     except NmbrsConfigError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return RedirectResponse(url, status_code=302)
+    return OAuthStartResponse(authorize_url=url)
 
 
 @router.get("/oauth/callback")

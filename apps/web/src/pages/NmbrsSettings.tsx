@@ -136,12 +136,19 @@ export function NmbrsSettings() {
                 <code className="text-xs bg-slate-100 px-1 mx-1 rounded">employee.absence.read</code>,
                 <code className="text-xs bg-slate-100 px-1 mx-1 rounded">company.info.read</code>.
               </p>
-              <a
-                href="/api/v1/integrations/nmbrs/oauth/start"
-                className="inline-block text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
+              <button
+                onClick={async () => {
+                  try {
+                    const r = await api<{authorize_url: string}>("/integrations/nmbrs/oauth/start");
+                    window.location.href = r.authorize_url;
+                  } catch (e: any) {
+                    alert("Fout bij starten OAuth: " + (e?.message || "onbekend"));
+                  }
+                }}
+                className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
               >
                 Verbinden met NMBRS →
-              </a>
+              </button>
             </div>
           )}
 
@@ -155,12 +162,19 @@ export function NmbrsSettings() {
                 >
                   {syncMut.isPending ? "Synchroniseren…" : "Sync medewerkers nu"}
                 </button>
-                <a
-                  href="/api/v1/integrations/nmbrs/oauth/start"
+                <button
+                  onClick={async () => {
+                    try {
+                      const r = await api<{authorize_url: string}>("/integrations/nmbrs/oauth/start");
+                      window.location.href = r.authorize_url;
+                    } catch (e: any) {
+                      alert("Fout: " + (e?.message || "onbekend"));
+                    }
+                  }}
                   className="text-xs text-slate-500 hover:text-blue-700"
                 >
                   Opnieuw autoriseren
-                </a>
+                </button>
               </div>
 
               {syncResult && (
