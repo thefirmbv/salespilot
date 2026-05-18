@@ -11,6 +11,21 @@ type DebtorStatus = {
   last_token_refresh_at: string | null;
 };
 
+type SoapCredsStatus = {
+  configured: boolean;
+  username: string | null;
+};
+
+type AbsenceSyncResult = {
+  ok: boolean;
+  employees_with_absences: number;
+  absences_total: number;
+  appointments_created: number;
+  appointments_skipped: number;
+  skipped_no_match: string[];
+  error: string | null;
+};
+
 type NmbrsStatus = {
   configured: boolean;
   connected: boolean;
@@ -91,6 +106,43 @@ export function NmbrsSettings() {
     mutationFn: (debtorId: string) =>
       api(`/integrations/nmbrs/debtors/${debtorId}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["/integrations/nmbrs/status"] }),
+  });
+
+  // SOAP creds (voor verlof-sync via legacy SOAP API)
+  const soapQ = useQuery<SoapCredsStatus>({
+    queryKey: ["/integrations/nmbrs/soap-creds"],
+    queryFn: () => api<SoapCredsStatus>("/integrations/nmbrs/soap-creds"),
+  });
+  const [soapUsername, setSoapUsername] = useState("");
+  const [soapToken, setSoapToken] = useState("");
+  const [soapEdit, setSoapEdit] = useState(false);
+  const soapSaveMut = useMutation({
+    mutationFn: () =>
+      api("/integrations/nmbrs/soap-creds", {
+        method: "PUT",
+        body: JSON.stringify({ username: soapUsername, token: soapToken }),
+      }),
+    onSuccess: () => {
+      setSoapEdit(false);
+      setSoapUsername(""); setSoapToken("");
+      qc.invalidateQueries({ queryKey: ["/integrations/nmbrs/soap-creds"] });
+    },
+  });
+  const soapDeleteMut = useMutation({
+    mutationFn: () => api("/integrations/nmbrs/soap-creds", { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/integrations/nmbrs/soap-creds"] }),
+  });
+
+  // Verlof-sync
+  const [absenceResult, setAbsenceResult] = useState<AbsenceSyncResult | null>(null);
+  const absenceMut = useMutation({
+    mutationFn: () => api<AbsenceSyncResult>("/integrations/nmbrs/sync-absences", { method: "POST" }),
+    onSuccess: (r) => setAbsenceResult(r),
+    onError: (e: any) => setAbsenceResult({
+      ok: false, employees_with_absences: 0, absences_total: 0,
+      appointments_created: 0, appointments_skipped: 0,
+      skipped_no_match: [], error: e?.message || "onbekend",
+    }),
   });
 
   const s = statusQ.data;
@@ -247,6 +299,172 @@ export function NmbrsSettings() {
           </div>
         </section>
       )}
+
+      {/* SOAP credentials voor verlof-sync */}
+      <section className="rounded-lg bg-white ring-1 ring-slate-200 p-5 space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-base font-medium">Verlof-sync (SOAP API)</h2>
+          <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded font-mono">
+            Legacy SOAP — wordt 2027 vervangen
+          </span>
+        </div>
+        <p className="text-xs text-slate-500">
+          NMBRS' moderne REST API heeft (nog) geen verlof-endpoint. Voor verlof gebruiken
+          we hun SOAP-API met je NMBRS-login + API-token.
+        </p>
+
+        {soapQ.isLoading && <div className="text-sm text-slate-500">Laden…</div>}
+
+        {soapQ.data && !soapEdit && (
+          <div className="space-y-2">
+            {soapQ.data.configured ? (
+              <div className="flex items-baseline justify-between gap-2 text-sm">
+                <div>
+                  <span className="text-emerald-700">✓ Ingesteld</span>
+                  {" — "}
+                  <span className="font-mono text-xs">{soapQ.data.username}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSoapEdit(true)}
+                    className="text-xs px-2 py-1 rounded ring-1 ring-slate-300 hover:bg-slate-50"
+                  >
+                    Wijzigen
+                  </button>
+                  <button
+                    onClick={() => { if (confirm("SOAP-credentials verwijderen?")) soapDeleteMut.mutate(); }}
+                    className="text-xs px-2 py-1 rounded ring-1 ring-rose-300 text-rose-700 hover:bg-rose-50"
+                  >
+                    Verwijderen
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-slate-600">
+                  Nog niet ingesteld. Vul je NMBRS-login + API-token in.
+                </p>
+                <button
+                  onClick={() => setSoapEdit(true)}
+                  className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  Credentials invoeren
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {soapEdit && (
+          <div className="space-y-3 bg-slate-50 rounded p-3">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
+                NMBRS Username (login email)
+              </label>
+              <input
+                type="email"
+                value={soapUsername}
+                onChange={(e) => setSoapUsername(e.target.value)}
+                placeholder="jasper@jasperwammes.nl"
+                className="w-full text-sm rounded border border-slate-300 px-2 py-1"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
+                NMBRS API Token
+              </label>
+              <input
+                type="password"
+                value={soapToken}
+                onChange={(e) => setSoapToken(e.target.value)}
+                placeholder="32-char token uit Mijn Profiel > API Tokens"
+                className="w-full text-sm rounded border border-slate-300 px-2 py-1 font-mono"
+              />
+              <div className="text-xs text-slate-500 mt-1">
+                Token vind je in app.nmbrs.nl → Mijn Profiel → API Tokens.
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setSoapEdit(false); setSoapUsername(""); setSoapToken(""); }}
+                className="text-sm px-3 py-1 rounded ring-1 ring-slate-300 hover:bg-slate-100"
+              >
+                Annuleren
+              </button>
+              <button
+                onClick={() => soapSaveMut.mutate()}
+                disabled={!soapUsername || !soapToken || soapSaveMut.isPending}
+                className="text-sm px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {soapSaveMut.isPending ? "Opslaan…" : "Opslaan"}
+              </button>
+            </div>
+            {soapSaveMut.isError && (
+              <div className="text-xs text-rose-700">
+                Fout: {(soapSaveMut.error as any)?.message}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Verlof-sync button (alleen als SOAP geconfigd) */}
+        {soapQ.data?.configured && !soapEdit && (
+          <div className="space-y-2 pt-3 border-t border-slate-100">
+            <button
+              onClick={() => absenceMut.mutate()}
+              disabled={absenceMut.isPending}
+              className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {absenceMut.isPending ? "Verlof synchroniseren…" : "Sync verlof nu"}
+            </button>
+            <div className="text-xs text-slate-500">
+              Haalt verlof-records uit NMBRS (huidig + vorig jaar) en plaatst ze als
+              all-day Appointments in HaloPSA. De HaloPSA → MS365 sync zorgt voor doorpush
+              naar persoonlijke Outlook-agenda's. Werkt alleen voor medewerkers met
+              gekoppelde HaloPSA-agent.
+            </div>
+
+            {absenceResult && (
+              <div className={`text-sm rounded-md p-3 ${
+                absenceResult.ok && !absenceResult.error
+                  ? "bg-emerald-50 border border-emerald-200 text-emerald-900"
+                  : "bg-rose-50 border border-rose-200 text-rose-900"
+              }`}>
+                {absenceResult.ok && !absenceResult.error ? (
+                  <div>
+                    <div className="font-medium">✓ Sync klaar</div>
+                    <div className="text-xs mt-1">
+                      {absenceResult.employees_with_absences} medewerkers met verlof,
+                      {" "}{absenceResult.absences_total} records totaal —
+                      {" "}<strong>{absenceResult.appointments_created}</strong> aangemaakt in HaloPSA,
+                      {" "}{absenceResult.appointments_skipped} duplicaat
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="font-medium">✗ Sync mislukt</div>
+                    {absenceResult.error && (
+                      <div className="text-xs mt-1">{absenceResult.error}</div>
+                    )}
+                  </div>
+                )}
+                {absenceResult.skipped_no_match.length > 0 && (
+                  <details className="mt-2 text-xs">
+                    <summary className="cursor-pointer">
+                      {absenceResult.skipped_no_match.length} overgeslagen records — toon details
+                    </summary>
+                    <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                      {absenceResult.skipped_no_match.map((m, i) => (
+                        <li key={i}>{m}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
