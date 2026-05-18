@@ -365,7 +365,7 @@ export function NmbrsSettings() {
                 type="email"
                 value={soapUsername}
                 onChange={(e) => setSoapUsername(e.target.value)}
-                placeholder="jasper@jasperwammes.nl"
+                placeholder="jouw.nmbrs-login@bedrijf.nl"
                 className="w-full text-sm rounded border border-slate-300 px-2 py-1"
               />
             </div>
