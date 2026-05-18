@@ -1099,3 +1099,143 @@ async def openprovider_tick(
             await db.commit()
 
     return {"ok": True, "orgs_polled": len(results), "results": results}
+
+
+# ----------------------------------------------------------------------
+# NMBRS cron tick — uurlijkse sync van medewerkers (auto-discover nieuwe)
+# ----------------------------------------------------------------------
+
+
+@internal_router.post("/nmbrs/tick")
+async def nmbrs_tick(
+    x_internal_token: str = Header(default=""),
+) -> dict[str, Any]:
+    """Sync NMBRS-medewerkers per org. Pickt nieuwe medewerkers
+    automatisch op (upsert by nmbrs_employee_id).
+
+    Skip-condities:
+      - geen NMBRS-integration voor de org
+      - integration is_enabled=false
+      - geen refresh_token (user heeft consent niet gegeven)
+    """
+    from salespilot.integrations.nmbrs import NmbrsClient, NmbrsAuthError, NmbrsConfigError
+    from salespilot.models.inventory import Employee
+
+    settings = get_settings()
+    expected = settings.autopilot_internal_token.get_secret_value()
+    if not expected or x_internal_token != expected:
+        raise HTTPException(status_code=401, detail="bad internal token")
+
+    results: list[dict[str, Any]] = []
+
+    async with get_sessionmaker()() as db:
+        orgs = (await db.execute(select(Organization))).scalars().all()
+
+    for org in orgs:
+        async with get_sessionmaker()() as db:
+            await _set_org_context(db, org.id)
+
+            integ = (
+                await db.execute(
+                    select(Integration).where(
+                        Integration.org_id == org.id,
+                        Integration.kind == "nmbrs",
+                    )
+                )
+            ).scalar_one_or_none()
+            if integ is None or not integ.is_enabled:
+                continue
+            cfg = integ.config_json or {}
+            if not cfg.get("refresh_token"):
+                continue  # user heeft nog geen consent gegeven
+
+            client = NmbrsClient(integ, db)
+            created = updated = unchanged = skipped = 0
+
+            try:
+                companies = await client.companies()
+            except (NmbrsAuthError, NmbrsConfigError) as e:
+                integ.last_sync_at = datetime.now(UTC)
+                integ.last_sync_status = "error"
+                integ.last_sync_message = f"companies fetch failed: {str(e)[:160]}"
+                await db.flush()
+                results.append({"org": str(org.id), "error": str(e)[:120]})
+                continue
+
+            for company in companies:
+                cid = str(company.get("id") or company.get("companyId") or "")
+                if not cid:
+                    continue
+                try:
+                    employees_raw = await client.employees(cid)
+                except Exception:
+                    continue
+                for emp in employees_raw:
+                    nmbrs_emp_id = str(emp.get("id") or emp.get("employeeId") or "")
+                    if not nmbrs_emp_id:
+                        continue
+                    try:
+                        pi = await client.employee_personal_info(nmbrs_emp_id)
+                    except Exception:
+                        continue
+                    first = (pi.get("firstName") or "").strip()
+                    last = (pi.get("lastName") or "").strip()
+                    prefix = (pi.get("prefix") or "").strip()
+                    full = " ".join(p for p in [first, prefix, last] if p) or (
+                        emp.get("displayName") or ""
+                    )
+                    email = (
+                        pi.get("emailWork") or pi.get("emailPrivate")
+                        or emp.get("email") or ""
+                    ).strip().lower() or None
+
+                    if not full:
+                        skipped += 1
+                        continue
+
+                    existing = (
+                        await db.execute(
+                            select(Employee).where(
+                                Employee.nmbrs_employee_id == nmbrs_emp_id
+                            )
+                        )
+                    ).scalar_one_or_none()
+
+                    now = datetime.now(UTC)
+                    if existing:
+                        changed = False
+                        if existing.full_name != full:
+                            existing.full_name = full; changed = True
+                        if email and existing.email != email:
+                            existing.email = email; changed = True
+                        if existing.nmbrs_company_id != cid:
+                            existing.nmbrs_company_id = cid; changed = True
+                        if changed:
+                            existing.updated_at = now
+                            updated += 1
+                        else:
+                            unchanged += 1
+                    else:
+                        db.add(Employee(
+                            id=uuid4(), org_id=org.id,
+                            full_name=full, email=email, status="active",
+                            nmbrs_employee_id=nmbrs_emp_id,
+                            nmbrs_company_id=cid,
+                            created_at=now, updated_at=now,
+                        ))
+                        created += 1
+
+            integ.last_sync_at = datetime.now(UTC)
+            integ.last_sync_status = "ok"
+            integ.last_sync_message = (
+                f"cron sync: {created} new, {updated} updated, "
+                f"{unchanged} unchanged, {skipped} skipped"
+            )
+            await db.flush()
+            results.append({
+                "org": str(org.id),
+                "created": created, "updated": updated,
+                "unchanged": unchanged, "skipped": skipped,
+            })
+
+    return {"ok": True, "orgs_synced": len(results), "results": results}
