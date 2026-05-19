@@ -105,13 +105,16 @@ async def list_quotations(
             stmt = stmt.where(Quotation.status == "accepted")
         elif bucket == "rejected":
             stmt = stmt.where(Quotation.status == "rejected")
+        elif bucket == "superseded":
+            # Vervallen door nieuwere revisie
+            stmt = stmt.where(Quotation.status == "superseded")
 
     # Order depends on bucket: for active buckets (sent/expiring/expired)
     # the user wants the longest-outstanding offer at the top so it can be
     # followed up first. For closed buckets (accepted/rejected) the most
     # recent decision is most relevant. "All" defaults to oldest-first
     # because the list is primarily a follow-up tool.
-    if bucket in ("accepted", "rejected"):
+    if bucket in ("accepted", "rejected", "superseded"):
         stmt = stmt.order_by(
             Quotation.sent_at.desc().nullslast(), Quotation.updated_at.desc()
         ).limit(limit)

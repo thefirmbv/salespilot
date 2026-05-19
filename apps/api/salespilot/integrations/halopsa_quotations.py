@@ -348,6 +348,76 @@ async def _ensure_reminders(
     return created
 
 
+async def _apply_revision_supersession(
+    db: AsyncSession, *, org_id: UUID,
+) -> int:
+    """Markeer overschreven revisies binnen een chain als ``superseded``.
+
+    Werkwijze
+    ---------
+    HaloPSA legt revisie-relaties vast via twee velden in de ``raw`` blob:
+      - ``original_revised_from_id``: integer-id van de oorspronkelijke
+        offerte waar dit een revisie van is (0 = geen revisie)
+      - ``po_ref``: revisie-kenmerk, bijv ``29-1`` voor het origineel,
+        ``29-1-A`` t/m ``29-1-Z`` voor opeenvolgende sub-revisies
+
+    We groeperen alle offertes binnen één chain op ``chain_parent_id`` =
+    ``original_revised_from_id if original_revised_from_id > 0 else halopsa_id``.
+    Per chain wint de offerte met de hoogste ``raw.date`` (= aanmaakdatum
+    in HaloPSA). Alle eerdere offertes binnen de chain die nog op
+    ``draft`` of ``sent`` staan worden bijgewerkt naar ``superseded``
+    (= "vervallen door revisie"). Offertes die al ``accepted``,
+    ``rejected`` of ``expired`` zijn raken we niet aan -- die hebben
+    al een definitieve uitkomst.
+
+    Returns
+    -------
+    int: aantal offertes dat geüpdatet werd naar ``superseded``.
+    """
+    # Pull alle offertes met hun chain-info via een SQL view-achtige query
+    rows = (
+        await db.execute(
+            select(Quotation).where(Quotation.org_id == org_id)
+        )
+    ).scalars().all()
+
+    # Groepeer op chain_parent_id
+    chains: dict[int, list[Quotation]] = {}
+    for q in rows:
+        raw = q.raw or {}
+        parent = raw.get("original_revised_from_id") or 0
+        try:
+            parent_id = int(parent)
+        except (TypeError, ValueError):
+            parent_id = 0
+        chain_id = parent_id if parent_id > 0 else q.halopsa_id
+        chains.setdefault(chain_id, []).append(q)
+
+    superseded_count = 0
+    for chain_id, items in chains.items():
+        if len(items) < 2:
+            continue  # geen revisie-keten
+
+        # Bepaal de "laatste": hoogste raw.date. Bij gelijkspel hoogste
+        # halopsa_id als tiebreak.
+        def _key(q: Quotation) -> tuple:
+            dt_str = (q.raw or {}).get("date") or ""
+            return (dt_str, q.halopsa_id)
+
+        items_sorted = sorted(items, key=_key)
+        latest = items_sorted[-1]
+
+        # Markeer alle eerdere offertes met status draft/sent
+        for older in items_sorted[:-1]:
+            if older.id == latest.id:
+                continue
+            if older.status in ("draft", "sent"):
+                older.status = "superseded"
+                superseded_count += 1
+
+    return superseded_count
+
+
 async def sync_quotations_for_org(
     db: AsyncSession,
     *,
@@ -459,10 +529,16 @@ async def sync_quotations_for_org(
             db, org_id=org_id, quotation=row, company=company
         )
 
+    # Vervangen revisies: per chain wint de laatste, eerdere worden
+    # vervallen verklaard (status='superseded'). Dit MOET vóór
+    # _recompute_deal_statuses gebeuren omdat de deal-status de
+    # superseded-status meeneemt om WON/LOST/OPEN te bepalen.
+    superseded_count = await _apply_revision_supersession(db, org_id=org_id)
+
     # After upserting every quotation, recompute the deal status for the
     # affected deals so that deal.status reflects the *best* outcome
     # across all linked quotations (a single accepted quote wins the deal,
-    # all rejected/expired loses it, otherwise it stays open).
+    # all rejected/expired/superseded loses it, otherwise it stays open).
     deals_recomputed = await _recompute_deal_statuses(db, org_id=org_id)
 
     return {
@@ -473,6 +549,7 @@ async def sync_quotations_for_org(
         "reminders_scheduled": reminders,
         "skipped_no_company": skipped_no_company,
         "deals_recomputed": deals_recomputed,
+        "superseded": superseded_count,
     }
 
 
@@ -533,7 +610,7 @@ async def _recompute_deal_statuses(
                 (q.amount_gross or q.amount_net or Decimal("0") for q in accepted_quotes),
                 start=Decimal("0"),
             )
-        elif statuses and statuses.issubset({"rejected", "expired"}):
+        elif statuses and statuses.issubset({"rejected", "expired", "superseded"}):
             target_status = DealStatus.LOST
             # Use the most recent rejected_at as closed_at
             target_closed = max(

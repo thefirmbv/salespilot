@@ -48,6 +48,7 @@ const STATUS_LABEL: Record<string, { label: string; bg: string; fg: string }> = 
   accepted: { label: "Geaccepteerd", bg: "#DCFCE7", fg: "#15803D" },
   rejected: { label: "Afgewezen", bg: "#FCE7E7", fg: "#9F1239" },
   expired:  { label: "Verlopen",  bg: "#FAEEDA", fg: "#633806" },
+  superseded: { label: "Vervallen (revisie)", bg: "#E4E4E7", fg: "#3F3F46" },
 };
 
 const billingPeriodLabel = (p: number | null) => {

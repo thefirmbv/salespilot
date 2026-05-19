@@ -10,7 +10,7 @@ type Quotation = {
   halopsa_id: number;
   reference: string | null;
   subject: string | null;
-  status: "draft" | "sent" | "accepted" | "rejected" | "expired";
+  status: "draft" | "sent" | "accepted" | "rejected" | "expired" | "superseded";
   status_label_halopsa: string | null;
   amount_net: string | null;
   amount_gross: string | null;
@@ -52,6 +52,7 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }>
   accepted: { bg: "#E1F5EE", text: "#085041", label: "Geaccepteerd" },
   rejected: { bg: "#FCEBEB", text: "#791F1F", label: "Afgewezen"  },
   expired:  { bg: "#FAEEDA", text: "#633806", label: "Verlopen"   },
+  superseded:{ bg: "#E4E4E7", text: "#3F3F46", label: "Vervallen (revisie)" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -122,6 +123,7 @@ const BUCKETS = [
   { id: "expired",  label: "Verlopen"      },
   { id: "accepted", label: "Geaccepteerd"  },
   { id: "rejected", label: "Afgewezen"     },
+  { id: "superseded", label: "Vervallen" },
 ];
 
 export function Quotations() {
@@ -178,6 +180,7 @@ export function Quotations() {
     expired:    all.filter(q => q.status === "expired" || (q.status === "sent" && q.valid_until && new Date(q.valid_until).getTime() <= now)).length,
     accepted:   all.filter(q => q.status === "accepted").length,
     rejected:   all.filter(q => q.status === "rejected").length,
+    superseded: all.filter(q => q.status === "superseded").length,
   };
 
   return (
